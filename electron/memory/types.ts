@@ -50,7 +50,7 @@ export const DEFAULT_MEMORY_CONFIG: MemoryConfig = {
   summaryMaxTokens: 300,
   summaryTemperature: 0.3,
   messageContentMaxLength: 600,
-  leaveMinRounds: 1,
+  leaveMinRounds: 3,
 };
 
 // ── 全局记忆配置 ──────────────────────────────────────────

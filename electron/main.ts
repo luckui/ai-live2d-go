@@ -134,7 +134,7 @@ app.on('before-quit', (event) => {
 
   // ── 快速判断是否真的有需要处理的内容 ──────────────────────
   const convId = activeConversationId;
-  const batchSize = 2; // leaveMinRounds(1) * 2，与 DEFAULT_MEMORY_CONFIG 保持一致
+  const batchSize = 6; // leaveMinRounds(3) * 2，与 DEFAULT_MEMORY_CONFIG 保持一致
   const unsummarized = countNonSystemMessages(convId) - getMemoryCursor(convId);
   const newFragments = getMemoryFragments(convId).length - getGlobalMemoryCursor(convId);
   const hasWork = unsummarized >= batchSize || newFragments > 0;
