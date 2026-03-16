@@ -1,0 +1,27 @@
+# 依赖
+node_modules/
+
+# 构建产物
+out/
+dist/
+
+# 本机配置
+.env
+.env.local
+.env.*.local
+
+# 用户数据（SQLite 数据库，含对话历史和已保存的 API Key）
+*.db
+*.db-shm
+*.db-wal
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# 编辑器
+.vscode/
+.idea/
+
+# TypeScript 增量构建缓存
+*.tsbuildinfo

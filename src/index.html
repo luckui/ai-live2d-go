@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Hiyori - 看板喵</title>
+    <!-- Live2D Cubism Core 必须在任何 ES 模块前加载 -->
+    <script src="/Core/live2dcubismcore.js"></script>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <div id="app">
+
+      <!-- ===== Live2D 画布区域（可拖动窗口） ===== -->
+      <div id="canvas-container" class="drag-region">
+        <canvas id="live2d-canvas"></canvas>
+        <!-- 右上角控制按钮（不可拖动） -->
+        <div id="canvas-controls" class="no-drag">
+          <button id="pin-btn" class="ctrl-btn" title="置顶/取消置顶">📌</button>
+        </div>
+      </div>
+
+      <!-- ===== 聊天面板 ===== -->
+      <div id="chat-panel">
+
+        <!-- 聊天头部（可拖动） -->
+        <div id="chat-header" class="drag-region">
+          <div class="chat-header-left">
+            <span class="chat-avatar">🌸</span>
+            <div class="chat-header-info">
+              <span class="chat-title">Hiyori</span>
+              <span class="chat-status">
+                <span class="status-dot"></span><span id="chat-conv-title">在线</span>
+              </span>
+            </div>
+          </div>
+          <div class="chat-header-right no-drag">
+            <button id="sessions-btn" class="ctrl-btn" title="历史对话">☰</button>
+            <button id="new-chat-btn" class="ctrl-btn" title="新建对话">✏</button>
+            <button id="settings-btn" class="ctrl-btn" title="LLM 设置">⚙</button>
+            <button id="toggle-chat-btn" class="ctrl-btn" title="折叠/展开聊天">
+              <span id="toggle-icon">▾</span>
+            </button>
+            <button id="close-btn" class="ctrl-btn close-ctrl" title="关闭">✕</button>
+          </div>
+        </div>
+
+        <!-- 聊天主体（可折叠） -->
+        <div id="chat-body">
+
+          <!-- 聊天视图 -->
+          <div id="chat-view">
+            <!-- 消息列表 -->
+            <div id="messages-container">
+              <div id="messages"></div>
+            </div>
+
+            <!-- 输入框区域 -->
+            <div id="input-area">
+              <input
+                type="text"
+                id="message-input"
+                placeholder="说点什么..."
+                autocomplete="off"
+                spellcheck="false"
+              />
+              <button id="send-btn">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
+                </svg>
+              </button>
+            </div>
+          </div><!-- /#chat-view -->
+
+          <!-- 对话列表面板（左滑入） -->
+          <div id="conv-panel">
+            <button id="conv-new-btn">✏ 新建对话</button>
+            <div id="conv-list"></div>
+          </div><!-- /#conv-panel -->
+
+        </div><!-- /#chat-body -->
+
+      </div><!-- /#chat-panel -->
+
+      <!-- ===== LLM 设置面板（从右滑入，全屏覆盖） ===== -->
+      <div id="settings-panel">
+
+        <div id="settings-hdr" class="drag-region">
+          <button id="settings-back" class="ctrl-btn no-drag">&lsaquo;</button>
+          <span class="settings-ttl">LLM 服务商设置</span>
+        </div>
+
+        <div id="settings-scroller">
+
+          <!-- 全局设置 -->
+          <section class="s-section">
+            <h3 class="s-title">全局</h3>
+            <label class="s-label">对话记忆轮数
+              <input id="s-rounds" type="number" min="1" max="200" class="s-input" />
+              <span class="s-hint">每次请求携带最近 N 轮上下文（1轮 = 1问1答，超出部分仍存数据库）</span>
+            </label>
+          </section>
+
+          <!-- 服务商列表 -->
+          <section class="s-section">
+            <div class="s-section-row">
+              <h3 class="s-title">服务商</h3>
+              <button id="s-add-btn" class="s-small-btn">+ 新增</button>
+            </div>
+            <div id="s-provider-pills"></div>
+          </section>
+
+          <!-- 服务商表单 -->
+          <section class="s-section" id="s-form-section">
+            <div class="s-section-row">
+              <h3 class="s-title">服务商配置</h3>
+              <div class="s-btn-group">
+                <button id="s-set-active-btn" class="s-small-btn">设为当前</button>
+                <button id="s-del-btn" class="s-small-btn s-del-btn">删除</button>
+              </div>
+            </div>
+
+            <label class="s-label">名称
+              <input id="s-name" type="text" class="s-input" placeholder="我的服务商" />
+            </label>
+            <label class="s-label">Base URL
+              <input id="s-baseUrl" type="text" class="s-input" placeholder="https://api.openai.com/v1" />
+            </label>
+            <label class="s-label">API Key
+              <div class="s-input-row">
+                <input id="s-apiKey" type="password" class="s-input" placeholder="sk-…" />
+                <button class="s-eye-btn" id="s-eye-btn">👁</button>
+              </div>
+            </label>
+            <label class="s-label">模型 ID
+              <input id="s-model" type="text" class="s-input" placeholder="gpt-4o-mini" />
+            </label>
+            <div class="s-row-2">
+              <label class="s-label">温度
+                <input id="s-temp" type="number" class="s-input" min="0" max="2" step="0.05" />
+              </label>
+              <label class="s-label">Max Tokens
+                <input id="s-tokens" type="number" class="s-input" min="128" step="128" />
+              </label>
+            </div>
+            <label class="s-label">系统提示词
+              <textarea id="s-sysprompt" class="s-textarea" rows="4" placeholder="你是一个…"></textarea>
+            </label>
+          </section>
+
+          <!-- 保存按钞 -->
+          <div class="s-save-row">
+            <button id="settings-save-btn" class="s-save-btn">保存设置</button>
+          </div>
+
+        </div><!-- /#settings-scroller -->
+      </div><!-- /#settings-panel -->
+
+    </div><!-- /#app -->
+
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>
