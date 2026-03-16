@@ -1,0 +1,170 @@
+request example
+curl --location 'https://ark.cn-beijing.volces.com/api/v3/responses' \
+--header "Authorization: Bearer $ARK_API_KEY" \
+--header 'Content-Type: application/json' \
+--data '{
+    "model": "doubao-seed-1-6-250615",
+    "input": "查询北京今天的天气",
+    "tools":[
+        {
+            "type": "function",
+            "name": "获取天气信息",
+            "description": "根据给出的位置获取天气信息",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "location": {
+                        "type": "string",
+                        "description": "城市名称，例如：北京"
+                    }
+                },
+                "required": [
+                    "location"
+                ]
+            }
+        }
+    ]
+}'
+
+response example
+{
+  "id": "resp_0217****b63e",
+  "created_at": 1756477803.0,
+  "error": null,
+  "incomplete_details": null,
+  "instructions": null,
+  "model": "doubao-seed-1-6-250615",
+  "object": "response",
+  "output": [
+    {
+      "id": "rs_0217****6b15",
+      "summary": [
+        {
+          "text": "让我思考一下，我现在需要回答用户的问题：“北京的天气怎么样？”根据系统提示，我需要调用工具来获取天气信息。首先，我要确认用户的问题是否需要调用工具。用户询问的是当前北京的天气，这属于实时信息，无法通过常识直接回答，所以必须使用提供的工具。\n\n接下来，查看可用的工具列表，只有一个工具叫做“获取天气信息”，它的参数需要一个“location”，类型是字符串，必填项。用户的问题中明确提到了“北京”，所以location参数应该是“北京”。\n\n然后，我需要按照格式要求生成工具调用。系统提示说调用工具需要用包裹，里面是一个JSON数组。这里只需要调用一个工具，所以是单工具调用。参数部分应该是{\"location\": \"北京\"}。\n\n检查是否有其他需要注意的地方，比如参数是否正确，格式是否符合要求。确认无误后，生成调用语句。不需要并行调用，因为只有一个工具可用，且只需要一次调用就能获取所需信息。因此，最终的调用应该是：\n\n",
+          "type": "summary_text"
+        }
+      ],
+      "type": "reasoning",
+      "status": "completed"
+    },
+    {
+      "arguments": "{\"location\":\"北京\"}",
+      "call_id": "call_****a6al",
+      "name": "获取天气信息",
+      "type": "function_call",
+      "id": "fc_0217****c976b",
+      "status": "completed"
+    }
+  ],
+  "parallel_tool_calls": null,
+  "temperature": null,
+  "tool_choice": null,
+  "tools": [
+    {
+      "name": "获取天气信息",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "location": {
+            "type": "string",
+            "description": "城市名称，例如：北京"
+          }
+        },
+        "required": ["location"]
+      },
+      "type": "function",
+      "description": "根据给出的位置获取天气信息"
+    }
+  ],
+  "top_p": null,
+  "max_output_tokens": 32768,
+  "previous_response_id": null,
+  "thinking": null,
+  "service_tier": "default",
+  "status": "completed",
+  "text": null,
+  "usage": {
+    "input_tokens": 454,
+    "input_tokens_details": {
+      "cached_tokens": 0
+    },
+    "output_tokens": 306,
+    "output_tokens_details": {
+      "reasoning_tokens": 279
+    },
+    "total_tokens": 760
+  },
+  "caching": {
+    "type": "disabled"
+  },
+  "store": true,
+  "expire_at": 1756737003
+}
+
+tools definition
+def get_current_weather(location: str, unit="摄氏度"):
+    # 实际调用天气查询 API 的逻辑
+    # 此处为示例，返回模拟的天气数据
+    return f"{location}今天天气晴朗，温度 25 {unit}。"
+
+
+tool calling
+from volcenginesdkarkruntime import Ark
+from volcenginesdkarkruntime.types.chat import ChatCompletion
+import json
+client = Ark()
+messages = [
+    {"role": "user", "content": "北京和上海今天的天气如何？"}
+]
+# 步骤1: 定义工具
+tools = [{
+  "type": "function",
+  "function": {
+    "name": "get_current_weather",
+    "description": "获取指定地点的天气信息",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "location": {
+          "type": "string",
+          "description": "地点的位置信息，例如北京、上海"
+        },
+        "unit": {
+          "type": "string",
+          "enum": ["摄氏度", "华氏度"],
+          "description": "温度单位"
+        }
+      },
+      "required": ["location"]
+    }
+  }
+}]
+def get_current_weather(location: str, unit="摄氏度"):
+    # 实际调用天气查询 API 的逻辑
+    # 此处为示例，返回模拟的天气数据
+    return f"{location}今天天气晴朗，温度 25 {unit}。"
+while True:
+    # 步骤2: 发起模型请求，由于模型在收到工具执行结果后仍然可能有函数调用意愿，因此需要多次请求
+    completion: ChatCompletion = client.chat.completions.create(
+    model="doubao-1-5-pro-32k-250115",
+    messages=messages,
+    tools=tools
+    )
+    resp_msg = completion.choices[0].message
+    # 展示模型中间过程的回复内容
+    print(resp_msg.content)
+    if completion.choices[0].finish_reason != "tool_calls":
+        # 模型最终总结，没有调用工具意愿
+        break
+    messages.append(completion.choices[0].message.model_dump())
+    tool_calls = completion.choices[0].message.tool_calls
+    for tool_call in tool_calls:
+        tool_name = tool_call.function.name
+        if tool_name == "get_current_weather":
+            # 步骤 3：调用外部工具
+            args = json.loads(tool_call.function.arguments)
+            tool_result = get_current_weather(**args)
+            # 步骤 4：回填工具结果，并获取模型总结回复
+            messages.append(
+                {"role": "tool", "content": tool_result, "tool_call_id": tool_call.id}
+            )

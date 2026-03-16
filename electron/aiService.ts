@@ -1,20 +1,32 @@
 /// <reference types="node" />
 import aiConfig, { LLMProviderConfig } from './ai.config';
 import { addMessage, getRecentContext, getMessages, renameConversation } from './db';
+import { toolRegistry } from './tools/index';
+import type { ChatMessage, ContentPart, ToolCall } from './tools/types';
+import { isToolImageResult } from './tools/types';
 
-// ── 内部类型 ──────────────────────────────────────────────
+// ── OpenAI /chat/completions 响应类型 ─────────────────────
 
-interface ChatMessage {
-  role: 'system' | 'user' | 'assistant';
-  content: string;
+interface ChatCompletionResponse {
+  choices: Array<{
+    message: {
+      role: 'assistant';
+      content: string | null;
+      tool_calls?: ToolCall[];
+    };
+    finish_reason: 'stop' | 'tool_calls' | 'length' | string;
+  }>;
+  error?: { message: string };
 }
 
-// ── OpenAI-compatible 请求 ────────────────────────────────
+// ── 工具调用循环 ──────────────────────────────────────────
 
-async function callOpenAICompatible(
+/** 单次向 /chat/completions 发起请求，返回原始响应 */
+async function fetchCompletion(
   provider: LLMProviderConfig,
-  messages: ChatMessage[]
-): Promise<string> {
+  messages: ChatMessage[],
+  withTools: boolean
+): Promise<ChatCompletionResponse> {
   const response = await fetch(`${provider.baseUrl}/chat/completions`, {
     method: 'POST',
     headers: {
@@ -26,6 +38,7 @@ async function callOpenAICompatible(
       messages,
       max_tokens: provider.maxTokens ?? 1024,
       temperature: provider.temperature ?? 0.85,
+      ...(withTools ? { tools: toolRegistry.getSchemas() } : {}),
     }),
   });
 
@@ -34,13 +47,78 @@ async function callOpenAICompatible(
     throw new Error(`HTTP ${response.status}: ${errText}`);
   }
 
-  const data = (await response.json()) as {
-    choices: Array<{ message: { content: string } }>;
-    error?: { message: string };
-  };
-
+  const data = (await response.json()) as ChatCompletionResponse;
   if (data.error) throw new Error(data.error.message);
-  return data.choices[0].message.content.trim();
+  return data;
+}
+
+/**
+ * 调用 LLM 并自动处理工具调用循环。
+ *
+ * - 若 toolRegistry 为空，直接发起单次请求
+ * - 若 LLM 返回 finish_reason === 'tool_calls'，并行执行所有工具，
+ *   将结果以 `tool` 角色回填，再次请求，直到得到最终回复
+ * - 设有最大循环轮数保护，防止意外死循环
+ */
+async function callWithToolLoop(
+  provider: LLMProviderConfig,
+  messages: ChatMessage[]
+): Promise<string> {
+  const withTools = !toolRegistry.isEmpty;
+  // 在副本上操作，不污染调用方的数组
+  const msgBuf: ChatMessage[] = [...messages];
+
+  const MAX_ROUNDS = 10;
+  for (let round = 0; round < MAX_ROUNDS; round++) {
+    const data = await fetchCompletion(provider, msgBuf, withTools);
+    const choice = data.choices[0];
+
+    // ── 无工具调用 → 返回最终文本 ──
+    if (choice.finish_reason !== 'tool_calls' || !choice.message.tool_calls?.length) {
+      return choice.message.content?.trim() ?? '';
+    }
+
+    // ── 有工具调用 → 追加 assistant 消息 ──
+    msgBuf.push({
+      role: 'assistant',
+      content: choice.message.content,
+      tool_calls: choice.message.tool_calls,
+    });
+
+    // ── 并行执行本轮所有工具 ──
+    const execResults = await Promise.all(
+      choice.message.tool_calls.map(async (tc) => ({
+        tc,
+        result: await toolRegistry.execute(tc.function.name, tc.function.arguments),
+      }))
+    );
+
+    // ── 回填结果：普通文本 → tool 消息；图像 → tool 消息 + user 多模态消息 ──
+    for (const { tc, result } of execResults) {
+      if (isToolImageResult(result)) {
+        // 1. tool 消息（文字描述，让模型知道工具已执行）
+        msgBuf.push({ role: 'tool', tool_call_id: tc.id, content: result.text });
+        // 2. user 多模态消息（注入图像，让视觉模型能"看到"截图）
+        const imageParts: ContentPart[] = [
+          { type: 'text', text: '（以下是截取的屏幕截图，请结合图像内容回答用户的问题）' },
+          {
+            type: 'image_url',
+            image_url: {
+              url: `data:${result.mimeType};base64,${result.imageBase64}`,
+              detail: 'high',
+            },
+          },
+        ];
+        msgBuf.push({ role: 'user', content: imageParts });
+      } else {
+        // 普通文本结果
+        msgBuf.push({ role: 'tool', tool_call_id: tc.id, content: result });
+      }
+    }
+    // 继续循环，带上工具结果再请求
+  }
+
+  throw new Error(`工具调用轮数超过上限 (${MAX_ROUNDS})，请检查工具或模型配置`);
 }
 
 // ── 主接口 ────────────────────────────────────────────────
@@ -49,6 +127,7 @@ async function callOpenAICompatible(
  * 发送消息并返回 AI 回复。
  * - 自动保存 user / assistant 消息至 SQLite
  * - 维护 contextWindowRounds 轮短期记忆
+ * - 若 toolRegistry 注册了工具，自动启用 Function Calling 并处理多轮工具循环
  * - 第一轮对话自动以用户首句命名对话
  */
 export async function sendChatMessage(
@@ -70,15 +149,15 @@ export async function sendChatMessage(
     ...context.map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content })),
   ];
 
-  // 3. 调用 AI
+  // 3. 调用 AI（含工具调用循环）
   let replyContent: string;
   try {
-    replyContent = await callOpenAICompatible(provider, messages);
+    replyContent = await callWithToolLoop(provider, messages);
   } catch (e) {
     replyContent = `（请求失败：${(e as Error).message}）`;
   }
 
-  // 4. 保存 AI 回复
+  // 4. 保存 AI 最终回复
   const saved = addMessage({
     conversation_id: conversationId,
     role: 'assistant',
