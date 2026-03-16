@@ -33,6 +33,10 @@ declare global {
       renameConversation(id: string, title: string): Promise<void>;
       send(conversationId: string, content: string): Promise<{ content: string; created_at: number }>;
     };
+    appLifecycleAPI?: {
+      onQuitting(cb: () => void): void;
+      onQuitReady(cb: () => void): void;
+    };
   }
 }
 
@@ -419,6 +423,19 @@ export async function initChat(): Promise<void> {
     const conv = await window.chatAPI!.createConversation();
     await switchConversation(conv.id);
   }
+
+  // ── 退出保存遮罩 ──────────────────────────────────────────
+  const quitOverlay = document.getElementById('quit-overlay');
+  window.appLifecycleAPI?.onQuitting(() => {
+    quitOverlay?.classList.add('visible');
+  });
+  window.appLifecycleAPI?.onQuitReady(() => {
+    // 短暂显示"完成"后窗口即关闭，给用户一个积极的视觉收尾
+    const title = quitOverlay?.querySelector('.quit-title');
+    const hint  = quitOverlay?.querySelector('.quit-hint');
+    if (title) (title as HTMLElement).textContent = '记忆已保存 ✓';
+    if (hint)  (hint  as HTMLElement).textContent  = '再见，下次见到你要更厉害哦 ✨';
+  });
 }
 
 

@@ -4,6 +4,7 @@ import { addMessage, getRecentContext, getMessages, renameConversation } from '.
 import { toolRegistry } from './tools/index';
 import type { ChatMessage, ContentPart, ToolCall } from './tools/types';
 import { isToolImageResult } from './tools/types';
+import { memoryManager, globalMemoryManager } from './memory/index';
 
 // ── OpenAI /chat/completions 响应类型 ─────────────────────
 
@@ -142,10 +143,15 @@ export async function sendChatMessage(
 
   // 2. 构建上下文（含刚保存的 user 消息）
   const context = getRecentContext(conversationId, aiConfig.contextWindowRounds);
+
+  // 将本对话历史片段 + 全局核心记忆 一并 append 到角色提示词末尾
+  const memoryAppend =
+    memoryManager.buildMemoryAppend(conversationId) +
+    globalMemoryManager.buildGlobalMemoryAppend();
+  const systemContent = (provider.systemPrompt ?? '') + memoryAppend;
+
   const messages: ChatMessage[] = [
-    ...(provider.systemPrompt
-      ? [{ role: 'system' as const, content: provider.systemPrompt }]
-      : []),
+    ...(systemContent ? [{ role: 'system' as const, content: systemContent }] : []),
     ...context.map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content })),
   ];
 
@@ -164,7 +170,10 @@ export async function sendChatMessage(
     content: replyContent,
   });
 
-  // 5. 首轮对话自动用用户首句命名
+  // 6. 异步触发记忆总结（非阻塞，不影响当前响应速度）
+  memoryManager.triggerCheckAndSummarize(conversationId);
+
+  // 6. 首轮对话自动用用户首句命名
   const allUserMsgs = getMessages(conversationId).filter((m) => m.role === 'user');
   if (allUserMsgs.length === 1) {
     const title = userContent.length > 18 ? userContent.slice(0, 18) + '…' : userContent;

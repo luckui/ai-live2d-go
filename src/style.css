@@ -1,4 +1,68 @@
 /* ========================================================
+   退出保存遮罩
+======================================================== */
+#quit-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  /* 炫光玻璃效果，与整体风格一致 */
+  background: rgba(255, 240, 248, 0.82);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border-radius: var(--radius-lg);
+  align-items: center;
+  justify-content: center;
+  animation: fadeIn 0.2s ease;
+}
+
+#quit-overlay.visible {
+  display: flex;
+}
+
+.quit-overlay-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 32px 40px;
+  background: rgba(255, 255, 255, 0.9);
+  border-radius: var(--radius-md);
+  box-shadow: 0 8px 32px rgba(200, 80, 120, 0.18);
+}
+
+.quit-spinner {
+  width: 36px;
+  height: 36px;
+  border: 3px solid var(--pink-light);
+  border-top-color: var(--pink-deep);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+.quit-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--pink-deep);
+  letter-spacing: 0.02em;
+}
+
+.quit-hint {
+  font-size: 12px;
+  color: #b0608a;
+  opacity: 0.85;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+/* ========================================================
    全局重置
 ======================================================== */
 *, *::before, *::after {

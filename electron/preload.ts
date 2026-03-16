@@ -26,3 +26,13 @@ contextBridge.exposeInMainWorld('settingsAPI', {
   get: () => ipcRenderer.invoke('settings:get'),
   save: (cfg: unknown) => ipcRenderer.invoke('settings:save', cfg),
 });
+
+/** 应用退出相关事件 */
+contextBridge.exposeInMainWorld('appLifecycleAPI', {
+  /** 开始退出流水线时触发（正在保存记忆） */
+  onQuitting: (cb: () => void) =>
+    ipcRenderer.on('app:quitting', () => cb()),
+  /** 流水线完成、即将关闭时触发 */
+  onQuitReady: (cb: () => void) =>
+    ipcRenderer.on('app:quit-ready', () => cb()),
+});

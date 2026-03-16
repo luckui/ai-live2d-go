@@ -25,6 +25,16 @@ export interface DBMessage {
   created_at: number;
 }
 
+export interface MemoryFragment {
+  id: string;
+  conversation_id: string;
+  /** 精简摘要文本 */
+  content: string;
+  /** 本片段归纳的 user+assistant 消息累计偏移终点 */
+  msg_offset_end: number;
+  created_at: number;
+}
+
 // ── 数据库实例 ────────────────────────────────────────────
 
 let db: Database.Database;
@@ -61,6 +71,18 @@ export function initDatabase(): void {
       key   TEXT PRIMARY KEY,
       value TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS memory_fragments (
+      id              TEXT    PRIMARY KEY,
+      conversation_id TEXT    NOT NULL,
+      content         TEXT    NOT NULL,
+      msg_offset_end  INTEGER NOT NULL,
+      created_at      INTEGER NOT NULL,
+      FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_memory_conv
+      ON memory_fragments(conversation_id, created_at);
   `);
 }
 
@@ -147,4 +169,94 @@ export function getRecentContext(conversationId: string, rounds: number): DBMess
     LIMIT ?
   `).all(conversationId, rounds * 2) as DBMessage[];
   return rows.reverse();
+}
+
+// ── 记忆片段 CRUD ─────────────────────────────────────────
+
+/** 获取一个对话的所有记忆片段，按时间升序（旧 → 新） */
+export function getMemoryFragments(conversationId: string): MemoryFragment[] {
+  return db.prepare(
+    'SELECT * FROM memory_fragments WHERE conversation_id = ? ORDER BY created_at ASC'
+  ).all(conversationId) as MemoryFragment[];
+}
+
+/** 新增一条记忆片段 */
+export function addMemoryFragment(
+  data: Omit<MemoryFragment, 'id' | 'created_at'>
+): MemoryFragment {
+  const fragment: MemoryFragment = {
+    ...data,
+    id: randomUUID(),
+    created_at: Date.now(),
+  };
+  db.prepare(
+    'INSERT INTO memory_fragments (id, conversation_id, content, msg_offset_end, created_at) VALUES (?, ?, ?, ?, ?)'
+  ).run(fragment.id, fragment.conversation_id, fragment.content, fragment.msg_offset_end, fragment.created_at);
+  return fragment;
+}
+
+/**
+ * 统计一个对话中 user + assistant 消息总数（不含 system）。
+ * 用于判断是否已积累足够消息触发记忆总结。
+ */
+export function countNonSystemMessages(conversationId: string): number {
+  const row = db.prepare(
+    "SELECT COUNT(*) as count FROM messages WHERE conversation_id = ? AND role IN ('user', 'assistant')"
+  ).get(conversationId) as { count: number };
+  return row.count;
+}
+
+/**
+ * 按偏移量获取一批 user+assistant 消息（用于送入 LLM 总结）。
+ * @param offset - 跳过的消息数（= 已总结游标）
+ * @param limit  - 本次获取的消息数（= summaryWindowRounds * 2）
+ */
+export function getMessagesInRange(
+  conversationId: string,
+  offset: number,
+  limit: number
+): DBMessage[] {
+  return db.prepare(`
+    SELECT * FROM messages
+    WHERE conversation_id = ? AND role IN ('user', 'assistant')
+    ORDER BY created_at ASC
+    LIMIT ? OFFSET ?
+  `).all(conversationId, limit, offset) as DBMessage[];
+}
+
+/** 读取记忆总结游标（已总结到的消息偏移） */
+export function getMemoryCursor(conversationId: string): number {
+  const val = getSetting(`mem_cursor_${conversationId}`);
+  return val ? parseInt(val, 10) : 0;
+}
+
+/** 更新记忆总结游标 */
+export function setMemoryCursor(conversationId: string, cursor: number): void {
+  setSetting(`mem_cursor_${conversationId}`, String(cursor));
+}
+
+// ── 全局核心记忆 ──────────────────────────────────────────
+
+/** 读取全局核心记忆文本（不存在时返回 null） */
+export function getGlobalMemory(): string | null {
+  return getSetting('global_memory');
+}
+
+/** 更新全局核心记忆文本 */
+export function setGlobalMemory(content: string): void {
+  setSetting('global_memory', content);
+}
+
+/**
+ * 读取「某对话已有多少条 memory_fragment 被纳入全局记忆」的游标。
+ * 用于防止对同一片段重复精炼。
+ */
+export function getGlobalMemoryCursor(conversationId: string): number {
+  const val = getSetting(`global_mem_cursor_${conversationId}`);
+  return val ? parseInt(val, 10) : 0;
+}
+
+/** 更新全局记忆游标 */
+export function setGlobalMemoryCursor(conversationId: string, n: number): void {
+  setSetting(`global_mem_cursor_${conversationId}`, String(n));
 }
