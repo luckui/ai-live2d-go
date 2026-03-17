@@ -4,7 +4,7 @@ import { addMessage, getRecentContext, getMessages, renameConversation } from '.
 import { toolRegistry } from './tools/index';
 import type { ChatMessage, ContentPart, ToolCall } from './tools/types';
 import { isToolImageResult } from './tools/types';
-import { memoryManager, globalMemoryManager } from './memory/index';
+import { memoryManager, globalMemoryManager, recordMessageActivity } from './memory/index';
 
 // ── OpenAI /chat/completions 响应类型 ─────────────────────
 
@@ -40,6 +40,17 @@ async function fetchCompletion(
       max_tokens: provider.maxTokens ?? 1024,
       temperature: provider.temperature ?? 0.85,
       ...(withTools ? { tools: toolRegistry.getSchemas() } : {}),
+      // 推理模型 thinking 预算控制（volcengine/ark API）
+      ...(provider.thinkingBudgetTokens !== undefined
+        ? {
+            thinking: {
+              type: provider.thinkingBudgetTokens === 0 ? 'disabled' : 'auto',
+              budget_tokens: provider.thinkingBudgetTokens,
+            },
+          }
+        : {}),
+      // 额外透传字段（最高优先级，可覆盖上方默认值）
+      ...(provider.extraParams ?? {}),
     }),
   });
 
@@ -106,7 +117,7 @@ async function callWithToolLoop(
             type: 'image_url',
             image_url: {
               url: `data:${result.mimeType};base64,${result.imageBase64}`,
-              detail: 'high',
+              detail: 'low',
             },
           },
         ];
@@ -170,8 +181,8 @@ export async function sendChatMessage(
     content: replyContent,
   });
 
-  // 6. 异步触发记忆总结（非阻塞，不影响当前响应速度）
-  memoryManager.triggerCheckAndSummarize(conversationId);
+  // 记录消息活跃时间（供空闲调度器判断何时触发后台总结，不再在热路径调用 LLM）
+  recordMessageActivity();
 
   // 6. 首轮对话自动用用户首句命名
   const allUserMsgs = getMessages(conversationId).filter((m) => m.role === 'user');

@@ -81,6 +81,15 @@ class BrowserSession {
       // 注入反检测脚本到所有新页面
       await this._context.addInitScript(STEALTH_SCRIPT);
       this._page = null;
+
+      // ── 监听新 tab/popup：自动切换 currentPage ────────────────────
+      // 当点击 target="_blank" 链接或 window.open() 产生新页面时自动跟进，
+      // 避免 AI 还在操作旧页面、不知道新页面已存在的问题。
+      this._context.on('page', (newPage: Page) => {
+        this._page = newPage;
+        // 等页面加载稳定后再允许操作
+        newPage.waitForLoadState('domcontentloaded').catch(() => {});
+      });
     }
 
     // 页面关闭或未创建，新建一个
@@ -96,6 +105,24 @@ class BrowserSession {
   /** 获取当前页面（不自动创建）；浏览器未打开时返回 null */
   get currentPage(): Page | null {
     return this._page && !this._page.isClosed() ? this._page : null;
+  }
+
+  /** 获取所有打开的页面列表（已关闭的自动过滤） */
+  get pages(): Page[] {
+    return this._context?.pages().filter((p) => !p.isClosed()) ?? [];
+  }
+
+  /**
+   * 切换到指定 tab（0-based index）。
+   * 超出范围时抛出错误。
+   */
+  switchToPage(index: number): Page {
+    const all = this.pages;
+    if (index < 0 || index >= all.length) {
+      throw new Error(`tab 索引 ${index} 越界，当前共 ${all.length} 个 tab`);
+    }
+    this._page = all[index];
+    return this._page;
   }
 
   /** 关闭浏览器并释放所有资源（Profile 数据保留在磁盘） */

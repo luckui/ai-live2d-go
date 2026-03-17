@@ -24,6 +24,18 @@ export interface LLMProviderConfig {
   temperature?: number;
   /** 系统人设提示词 */
   systemPrompt?: string;
+  /**
+   * 推理模型（如 doubao-seed、DeepSeek-R1）的 thinking token 上限。
+   * 对应 volcengine/ark API 的 `thinking.budget_tokens` 字段。
+   * 设为 0 表示关闭 thinking（等价 type:"disabled"）。
+   * 不设则不发此字段（模型默认行为）。
+   */
+  thinkingBudgetTokens?: number;
+  /**
+   * 额外透传到 API 的请求体字段（优先级最高）。
+   * 可用于配置服务商特有参数（如自定义 stop 序列、response_format 等）。
+   */
+  extraParams?: Record<string, unknown>;
 }
 
 export interface AIConfig {
@@ -40,7 +52,7 @@ export interface AIConfig {
 
 const aiConfig: AIConfig = {
   activeProvider: 'doubao',
-  contextWindowRounds: 30,
+  contextWindowRounds: 6,
   providers: {
     doubao: {
       type: 'openai-compatible',
@@ -50,6 +62,9 @@ const aiConfig: AIConfig = {
       model: 'doubao-seed-1-8-251228',
       temperature: 0.85,
       maxTokens: 1024,
+      // doubao-seed 是推理模型，thinking tokens 计费。
+      // 限制推理预算可大幅降低单轮消耗（默认 2048，可上调至 4096 以许更复杂的工具调用）。
+      thinkingBudgetTokens: 2048,
       systemPrompt:
         '你是 Hiyori，一个活泼可爱的 Live2D 桌面宠物助手。' +
         '说话俏皮温柔，喜欢用颜文字和 emoji，但也能认真解答各类问题。' +

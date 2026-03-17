@@ -40,6 +40,14 @@ export class MemoryManager {
   }
 
   /**
+   * 可 await 的追赶式总结，供启动批处理和空闲调度器调用。
+   * 与 triggerCheckAndSummarize 逻辑相同，但可以被 await。
+   */
+  async catchUpAsync(conversationId: string): Promise<void> {
+    await this.checkAndSummarize(conversationId);
+  }
+
+  /**
    * 离开对话时调用：对窗口尾部不足整窗的剩余消息执行一次部分总结。
    *
    * 触发条件：未总结的消息数 ≥ leaveMinRounds*2（且 < 完整窗口大小，

@@ -15,7 +15,8 @@ export interface MemoryConfig {
   /**
    * 触发一次记忆总结所需的对话轮数。
    * 1 轮 = 1 条 user + 1 条 assistant。
-   * 默认 30，即每 30 轮（60 条消息）总结一次。
+   * 默认 10，即每 10 轮（20 条消息）总结一次。
+   * 应比 contextWindowRounds 稍大，避免旧消息脱出上下文且尚未被总结的盲区。
    */
   summaryWindowRounds: number;
 
@@ -46,7 +47,7 @@ export interface MemoryConfig {
 }
 
 export const DEFAULT_MEMORY_CONFIG: MemoryConfig = {
-  summaryWindowRounds: 30,
+  summaryWindowRounds: 10,   // 与 contextWindowRounds(6) 匹配，缩短盲区
   summaryMaxTokens: 300,
   summaryTemperature: 0.3,
   messageContentMaxLength: 600,
@@ -66,7 +67,7 @@ export interface GlobalMemoryConfig {
   refinementTemperature: number;
   /**
    * 触发全局精炼的最低新片段数。
-   * 设为 1：只要有 1 条新片段就精炼；可调大以减少 LLM 调用频率。
+   * 默认 3：积累 3 条新片段（约 30 轮对话）才精炼一次，避免频繁 LLM 调用。
    */
   minNewFragments: number;
   /**
@@ -79,7 +80,7 @@ export interface GlobalMemoryConfig {
 export const DEFAULT_GLOBAL_MEMORY_CONFIG: GlobalMemoryConfig = {
   refinementMaxTokens: 400,
   refinementTemperature: 0.2,
-  minNewFragments: 1,
+  minNewFragments: 3,        // 积累 3 条新片段才触发一次全局精炼，避免频繁 LLM 调用
   globalMemoryMaxChars: 350,
 };
 

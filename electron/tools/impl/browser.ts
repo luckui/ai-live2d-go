@@ -22,8 +22,12 @@
  * ─────────────────────────────────────────────────────────────────
  */
 
+import { nativeImage } from 'electron';
 import { browserSession } from './browserSession';
 import type { ToolDefinition, ToolImageResult } from '../types';
+
+/** 浏览器截图最大宽度，超出等比缩小 */
+const SCREENSHOT_MAX_WIDTH = 1280;
 
 // ── 辅助函数 ──────────────────────────────────────────────────────
 
@@ -34,12 +38,15 @@ async function waitSettle(ms = 5000): Promise<void> {
   await page.waitForLoadState('domcontentloaded', { timeout: ms }).catch(() => {});
 }
 
-/** 返回当前页面简短状态描述 */
+/** 返回当前页面简短状态描述（含 tab 索引） */
 async function pageInfo(): Promise<string> {
   const page = browserSession.currentPage;
   if (!page) return '（浏览器未打开）';
   const title = await page.title().catch(() => '（无标题）');
-  return `"${title}" | ${page.url()}`;
+  const all = browserSession.pages;
+  const idx = all.indexOf(page);
+  const tabTag = all.length > 1 ? ` [Tab ${idx + 1}/${all.length}]` : '';
+  return `"${title}"${tabTag} | ${page.url()}`;
 }
 
 // ── 1. browser_open ───────────────────────────────────────────────
@@ -352,14 +359,92 @@ const browserScreenshot: ToolDefinition<Record<string, never>> = {
       };
     }
 
-    const buffer = await page.screenshot({ type: 'png', fullPage: false });
+    const rawBuffer = await page.screenshot({ type: 'png', fullPage: false });
+    // 等比压缩，超过 1280px 才缩小（减少 token 开销）
+    let img = nativeImage.createFromBuffer(rawBuffer);
+    const { width } = img.getSize();
+    if (width > SCREENSHOT_MAX_WIDTH) {
+      img = nativeImage.createFromBuffer(
+        img.resize({ width: SCREENSHOT_MAX_WIDTH }).toPNG()
+      );
+    }
+    const buffer = img.toPNG();
     const title = await page.title().catch(() => '（无标题）');
+    const all = browserSession.pages;
+    const idx = all.indexOf(page);
+    const tabTag = all.length > 1 ? ` [Tab ${idx + 1}/${all.length}]` : '';
 
     return {
-      text: `📸 浏览器截图 | ${title} | ${page.url()}`,
+      text: `📸 浏览器截图${tabTag} | ${title} | ${page.url()}`,
       imageBase64: buffer.toString('base64'),
       mimeType: 'image/png',
     };
+  },
+};
+
+// ── 10. browser_list_tabs ────────────────────────────────────────
+
+const browserListTabs: ToolDefinition<Record<string, never>> = {
+  schema: {
+    type: 'function',
+    function: {
+      name: 'browser_list_tabs',
+      description:
+        '列出当前浏览器所有打开的 tab（标签页），显示每个 tab 的序号、标题和网址。' +
+        '当不确定现在有几个 tab、用户看到的是哪个页面时，先调用此工具确认。',
+      parameters: { type: 'object', properties: {}, required: [] },
+    },
+  },
+
+  async execute() {
+    const all = browserSession.pages;
+    if (all.length === 0) return '❌ 浏览器未打开任何页面';
+    const current = browserSession.currentPage;
+    const lines = await Promise.all(
+      all.map(async (p, i) => {
+        const title = await p.title().catch(() => '（无标题）');
+        const mark = p === current ? ' ◀ 当前' : '';
+        return `  [${i + 1}] "${title}" | ${p.url()}${mark}`;
+      })
+    );
+    return `📋 共 ${all.length} 个 tab：\n${lines.join('\n')}`;
+  },
+};
+
+// ── 11. browser_switch_tab ────────────────────────────────────────
+
+interface SwitchTabParams { index: number }
+
+const browserSwitchTab: ToolDefinition<SwitchTabParams> = {
+  schema: {
+    type: 'function',
+    function: {
+      name: 'browser_switch_tab',
+      description:
+        '切换到指定序号的 tab（从 1 开始计数）。' +
+        '当点击链接或按钮后产生了新 tab、或需要切换到另一个已打开的页面时使用。' +
+        '切换后建议立刻用 browser_screenshot 确认页面内容。',
+      parameters: {
+        type: 'object',
+        properties: {
+          index: {
+            type: 'number',
+            description: 'tab 序号，从 1 开始（用 browser_list_tabs 查看序号）',
+          },
+        },
+        required: ['index'],
+      },
+    },
+  },
+
+  async execute({ index }) {
+    const all = browserSession.pages;
+    if (all.length === 0) return '❌ 浏览器未打开任何页面';
+    if (index < 1 || index > all.length) {
+      return `❌ 序号 ${index} 超出范围，当前共 ${all.length} 个 tab（1~${all.length}）`;
+    }
+    browserSession.switchToPage(index - 1); // switchToPage 接受 0-based index
+    return `✅ 已切换 → ${await pageInfo()}`;
   },
 };
 
@@ -376,4 +461,6 @@ export const browserTools: ToolDefinition<any>[] = [
   browserScroll,
   browserHover,
   browserScreenshot,
+  browserListTabs,
+  browserSwitchTab,
 ];

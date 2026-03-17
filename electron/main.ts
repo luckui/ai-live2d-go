@@ -19,7 +19,7 @@ import {
   getGlobalMemoryCursor,
 } from './db';
 import { sendChatMessage } from './aiService';
-import { triggerConversationLeave, memoryManager, globalMemoryManager } from './memory/index';
+import { triggerConversationLeave, memoryManager, globalMemoryManager, runStartupCatchUp, startIdleScheduler } from './memory/index';
 import aiConfig from './ai.config';
 
 // ── 实运行时加载持久化的 LLM 配置 ──────────────────────────────
@@ -134,6 +134,17 @@ app.whenReady().then(() => {
   initDatabase();
   loadPersistedConfig();
   createWindow();
+
+  // ── 启动时批量追赶：延迟 3s 等 UI 稳定后处理所有遗留的未总结消息 ──
+  setTimeout(() => {
+    const ids = listConversations().map((c) => c.id);
+    runStartupCatchUp(ids).catch((e) =>
+      console.error('[Memory] 启动追赶异常:', (e as Error).message)
+    );
+  }, 3000);
+
+  // ── 空闲调度器：用户停止聊天 10 分钟后自动后台总结 ──
+  startIdleScheduler(() => activeConversationId);
 });
 
 /** 防止 before-quit 重入：流水线执行完成后我们主动调用 app.quit()，不再被拦截 */
