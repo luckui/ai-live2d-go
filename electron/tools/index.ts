@@ -13,11 +13,19 @@ import { ToolRegistry } from './registry';
 import datetimeTool from './impl/datetime';
 import calculatorTool from './impl/calculator';
 import screenshotTool from './impl/screenshot';
+import { browserTools } from './impl/browser';
 
-export const toolRegistry = new ToolRegistry()
+const registry = new ToolRegistry()
   .register(datetimeTool)
   .register(calculatorTool)
   .register(screenshotTool);
+
+// 批量注册所有浏览器工具
+for (const tool of browserTools) {
+  registry.register(tool);
+}
+
+export const toolRegistry = registry;
 
 // 重新导出，方便外部直接从此模块引入类型和类
 export type { ToolDefinition } from './types';

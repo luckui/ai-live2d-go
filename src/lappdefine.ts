@@ -36,17 +36,46 @@ export const BackImageName = '';
 export const GearImageName = '';
 export const PowerImageName = '';
 
-// 只使用 Hiyori 模型
-export const ModelDir: string[] = ['Hiyori'];
-export const ModelDirSize: number = ModelDir.length;
+// ── 可扩展的模型配置 ──────────────────────────────────────────────
+export interface ModelConfig {
+  /** Resources/ 下的子目录名 */
+  dir: string;
+  /** .model3.json 文件名 */
+  jsonName: string;
+  // 动作组名（'' 表示该模型无此组）
+  motionIdle: string;
+  motionTap: string;
+  motionTapBody: string;
+  motionFlick: string;
+  motionFlickUp: string;
+  motionFlickDown: string;
+  motionFlickBody: string;
+  // 碰撞区域名（'' 表示该模型无此区域）
+  hitHead: string;
+  hitBody: string;
+}
 
-// 动作组名（与 model3.json 对应）
-export const MotionGroupIdle = 'Idle';
-export const MotionGroupTapBody = 'TapBody';
+export const Models: ModelConfig[] = [
+  {
+    dir: 'Hiyori_pro',
+    jsonName: 'hiyori_pro_t11.model3.json',
+    motionIdle: 'Idle',
+    motionTap: 'Tap',
+    motionTapBody: 'Tap@Body',
+    motionFlick: 'Flick',
+    motionFlickUp: 'FlickUp',
+    motionFlickDown: 'FlickDown',
+    motionFlickBody: 'Flick@Body',
+    hitHead: '',      // Hiyori_pro 无 Head 碰撞区
+    hitBody: 'Body',
+  },
+];
 
-// 碰撞区域名（与 model3.json 对应）
-export const HitAreaNameHead = 'Head';
-export const HitAreaNameBody = 'Body';
+// 供 LAppModel 内部 idle 循环默认使用（实例可通过 setIdleGroup 覆盖）
+export const MotionGroupIdle = Models[0].motionIdle;
+
+// Flick 判定阈值（视图空间单位），超过此值视为划动而非点击
+export const FlickThreshold = 0.15;
 
 // 动作优先级
 export const PriorityNone = 0;
@@ -61,4 +90,4 @@ export const MotionConsistencyValidationEnable = true;
 // 调试日志
 export const DebugLogEnable = false;
 export const DebugTouchLogEnable = false;
-export const CubismLoggingLevel: LogLevel = LogLevel.LogLevel_Verbose;
+export const CubismLoggingLevel: LogLevel = LogLevel.LogLevel_Warning;

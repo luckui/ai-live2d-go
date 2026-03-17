@@ -87,13 +87,17 @@ export class LAppDelegate {
   }
 
   private releaseEventListener(): void {
-    document.removeEventListener('pointerdown', this.pointBeganEventListener);
-    this.pointBeganEventListener = null;
+    const canvas = this._canvases.at(0);
+    if (canvas) {
+      canvas.removeEventListener('pointerdown', this.pointBeganEventListener);
+      canvas.removeEventListener('pointerup', this.pointEndedEventListener);
+      canvas.removeEventListener('pointercancel', this.pointCancelEventListener);
+    }
     document.removeEventListener('pointermove', this.pointMovedEventListener);
     this.pointMovedEventListener = null;
-    document.removeEventListener('pointerup', this.pointEndedEventListener);
-    this.pointEndedEventListener = null;
     document.removeEventListener('pointercancel', this.pointCancelEventListener);
+    this.pointBeganEventListener = null;
+    this.pointEndedEventListener = null;
     this.pointCancelEventListener = null;
   }
 
@@ -113,19 +117,42 @@ export class LAppDelegate {
     this.initializeCubism();
     this.initializeSubdelegates();
     this.initializeEventListener();
+    this.initializeCursorTracking();
     return true;
   }
 
+  /**
+   * 注册全屏光标追踪：监听主进程推送的光标坐标，转换后驱动 Live2D 目光跟随
+   */
+  private initializeCursorTracking(): void {
+    const electronAPI = (window as any).electronAPI;
+    if (!electronAPI?.onCursorPosition) return;
+    electronAPI.onCursorPosition((pos: { x: number; y: number }) => {
+      const sub = this._subdelegates.at(0);
+      const canvas = this._canvases.at(0);
+      if (!sub || !canvas) return;
+      const rect = canvas.getBoundingClientRect();
+      // 屏幕绝对坐标 → canvas 内 CSS 坐标
+      // window.screenX/Y 是渲染层窗口左上角在屏幕上的位置（标准浏览器 API）
+      const cssX = pos.x - window.screenX - rect.left;
+      const cssY = pos.y - window.screenY - rect.top;
+      sub.setFaceTarget(cssX, cssY);
+    });
+  }
+
   private initializeEventListener(): void {
+    const canvas = this._canvases.at(0);
+
     this.pointBeganEventListener = this.onPointerBegan.bind(this);
     this.pointMovedEventListener = this.onPointerMoved.bind(this);
     this.pointEndedEventListener = this.onPointerEnded.bind(this);
     this.pointCancelEventListener = this.onPointerCancel.bind(this);
 
-    document.addEventListener('pointerdown', this.pointBeganEventListener, { passive: true });
+    // pointerdown/up/cancel 只监听 canvas：防止聊天面板点击触发 Live2D tap
+    canvas.addEventListener('pointerdown', this.pointBeganEventListener, { passive: true });
     document.addEventListener('pointermove', this.pointMovedEventListener, { passive: true });
-    document.addEventListener('pointerup', this.pointEndedEventListener, { passive: true });
-    document.addEventListener('pointercancel', this.pointCancelEventListener, { passive: true });
+    canvas.addEventListener('pointerup', this.pointEndedEventListener, { passive: true });
+    canvas.addEventListener('pointercancel', this.pointCancelEventListener, { passive: true });
   }
 
   private initializeCubism(): void {
@@ -171,3 +198,4 @@ export class LAppDelegate {
   private pointEndedEventListener: (this: Document, ev: PointerEvent) => void;
   private pointCancelEventListener: (this: Document, ev: PointerEvent) => void;
 }
+

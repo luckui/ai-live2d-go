@@ -117,6 +117,9 @@ export class LAppView {
     if (LAppDefine.DebugTouchLogEnable) {
       LAppPal.printMessage(`[APP]touchesEnded x: ${x} y: ${y}`);
     }
+
+    // 桌面端：鼠标拖动 = 移动窗口（由 setupWindowDrag 处理），不会走到 Moved
+    // 因此 pointerup 到达这里必然是点击，直接 onTap
     manager.onTap(x, y);
   }
 

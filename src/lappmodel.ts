@@ -513,7 +513,7 @@ export class LAppModel extends CubismUserModel {
     if (this._motionManager.isFinished()) {
       // モーションの再生がない場合、待機モーションの中からランダムで再生する
       this.startRandomMotion(
-        LAppDefine.MotionGroupIdle,
+        this._idleGroup,
         LAppDefine.PriorityIdle
       );
     } else {
@@ -934,6 +934,13 @@ export class LAppModel extends CubismUserModel {
   /**
    * コンストラクタ
    */
+  /** 待机动作组名，由 LAppLive2DManager 根据 ModelConfig 设置 */
+  private _idleGroup: string = LAppDefine.MotionGroupIdle;
+
+  public setIdleGroup(group: string): void {
+    this._idleGroup = group;
+  }
+
   public constructor() {
     super();
 

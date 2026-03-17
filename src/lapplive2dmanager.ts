@@ -30,22 +30,62 @@ export class LAppLive2DManager {
     }
     const model: LAppModel = this._models.at(0);
     if (!model) return;
+    const cfg = LAppDefine.Models[this._sceneIndex];
 
-    if (model.hitTest(LAppDefine.HitAreaNameHead, x, y)) {
+    if (cfg.hitHead && model.hitTest(cfg.hitHead, x, y)) {
       if (LAppDefine.DebugLogEnable) {
-        LAppPal.printMessage(`[APP]hit area: [${LAppDefine.HitAreaNameHead}]`);
+        LAppPal.printMessage(`[APP]hit area: [${cfg.hitHead}]`);
       }
       model.setRandomExpression();
-    } else if (model.hitTest(LAppDefine.HitAreaNameBody, x, y)) {
-      if (LAppDefine.DebugLogEnable) {
-        LAppPal.printMessage(`[APP]hit area: [${LAppDefine.HitAreaNameBody}]`);
+      if (cfg.motionTap) {
+        model.startRandomMotion(cfg.motionTap, LAppDefine.PriorityNormal,
+          this.finishedMotion, this.beganMotion);
       }
-      model.startRandomMotion(
-        LAppDefine.MotionGroupTapBody,
-        LAppDefine.PriorityNormal,
-        this.finishedMotion,
-        this.beganMotion
-      );
+    } else if (cfg.hitBody && model.hitTest(cfg.hitBody, x, y)) {
+      if (LAppDefine.DebugLogEnable) {
+        LAppPal.printMessage(`[APP]hit area: [${cfg.hitBody}]`);
+      }
+      if (cfg.motionTapBody) {
+        model.startRandomMotion(cfg.motionTapBody, LAppDefine.PriorityNormal,
+          this.finishedMotion, this.beganMotion);
+      }
+    } else {
+      if (cfg.motionTap) {
+        model.startRandomMotion(cfg.motionTap, LAppDefine.PriorityNormal,
+          this.finishedMotion, this.beganMotion);
+      }
+    }
+  }
+
+  /**
+   * 划动手势：根据方向和碰撞区域触发对应动作组
+   * @param dx 视图空间水平位移（正=右）
+   * @param dy 视图空间垂直位移（正=上）
+   * @param x  抬起点视图 X
+   * @param y  抬起点视图 Y
+   */
+  public onFlick(dx: number, dy: number, x: number, y: number): void {
+    if (LAppDefine.DebugLogEnable) {
+      LAppPal.printMessage(`[APP]flick dx:${dx.toFixed(2)} dy:${dy.toFixed(2)}`);
+    }
+    const model: LAppModel = this._models.at(0);
+    if (!model) return;
+    const cfg = LAppDefine.Models[this._sceneIndex];
+
+    let motionGroup: string;
+    if (cfg.hitBody && model.hitTest(cfg.hitBody, x, y)) {
+      motionGroup = cfg.motionFlickBody;
+    } else if (Math.abs(dx) >= Math.abs(dy)) {
+      motionGroup = cfg.motionFlick;       // 横向划动
+    } else if (dy > 0) {
+      motionGroup = cfg.motionFlickUp;     // 向上划
+    } else {
+      motionGroup = cfg.motionFlickDown;   // 向下划
+    }
+
+    if (motionGroup) {
+      model.startRandomMotion(motionGroup, LAppDefine.PriorityNormal,
+        this.finishedMotion, this.beganMotion);
     }
   }
 
@@ -85,14 +125,14 @@ export class LAppLive2DManager {
 
   private changeScene(index: number): void {
     this._sceneIndex = index;
-    const modelName: string = LAppDefine.ModelDir[index];
-    const modelPath: string = LAppDefine.ResourcesPath + modelName + '/';
-    const modelJsonName: string = modelName + '.model3.json';
+    const cfg = LAppDefine.Models[index];
+    const modelPath: string = LAppDefine.ResourcesPath + cfg.dir + '/';
 
     this.releaseAllModel();
     const instance = new LAppModel();
     instance.setSubdelegate(this._subdelegate);
-    instance.loadAssets(modelPath, modelJsonName);
+    instance.setIdleGroup(cfg.motionIdle);
+    instance.loadAssets(modelPath, cfg.jsonName);
     this._models.pushBack(instance);
   }
 

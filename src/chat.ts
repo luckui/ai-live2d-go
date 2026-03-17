@@ -342,19 +342,29 @@ function setupWindowDrag(): void {
   let isDragging = false;
   let lastX = 0;
   let lastY = 0;
+  let startX = 0;
+  let startY = 0;
 
   const canvasContainer = document.getElementById('canvas-container');
 
   canvasContainer?.addEventListener('mousedown', (e: MouseEvent) => {
     if ((e.target as HTMLElement).closest('.no-drag')) return;
     if (e.button !== 0) return;
-    isDragging = true;
+    // 不调 preventDefault，否则会干扰 Live2D 的 pointer 事件链
+    isDragging = false; // 先不设为 true，等实际移动后才设
     lastX = e.screenX;
     lastY = e.screenY;
-    e.preventDefault();
+    startX = e.screenX;
+    startY = e.screenY;
   });
 
   document.addEventListener('mousemove', (e: MouseEvent) => {
+    if (lastX === 0 && lastY === 0) return;
+    const moved = Math.abs(e.screenX - startX) + Math.abs(e.screenY - startY);
+    if (!isDragging && moved > 4) {
+      // 移动超过 4px 才认为拖拽，不是点击
+      isDragging = true;
+    }
     if (!isDragging) return;
     window.electronAPI?.dragWindow(e.screenX - lastX, e.screenY - lastY);
     lastX = e.screenX;
@@ -363,6 +373,8 @@ function setupWindowDrag(): void {
 
   document.addEventListener('mouseup', () => {
     isDragging = false;
+    lastX = 0;
+    lastY = 0;
   });
 }
 

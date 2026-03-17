@@ -5,6 +5,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.send('window-drag', { deltaX, deltaY }),
   closeWindow: () => ipcRenderer.send('window-close'),
   resizeWindow: (height: number) => ipcRenderer.send('window-resize', { height }),
+  /** 注册全屏光标位置回调，用于 Live2D 目光追踪 */
+  onCursorPosition: (cb: (pos: { x: number; y: number }) => void) =>
+    ipcRenderer.on('cursor-position', (_e, pos) => cb(pos)),
 });
 
 contextBridge.exposeInMainWorld('chatAPI', {

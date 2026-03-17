@@ -224,6 +224,21 @@ export class LAppSubdelegate {
     return this._glManager.getGl().isContextLost();
   }
 
+  /**
+   * 目光追踪：将 canvas 内 CSS 坐标转为视图坐标，驱动头部朝向与眼球方向
+   * @param cssX 相对于 canvas 左上角的 CSS 像素 X
+   * @param cssY 相对于 canvas 左上角的 CSS 像素 Y
+   */
+  public setFaceTarget(cssX: number, cssY: number): void {
+    if (!this._view) return;
+    const dpr = window.devicePixelRatio || 1;
+    const viewX = this._view.transformViewX(cssX * dpr);
+    const viewY = this._view.transformViewY(cssY * dpr);
+    // 夹紧到 [-1, 1]，防止参数溢出（光标极远时模型只看向边缘而不超量）
+    const clamp = (v: number) => Math.max(-1, Math.min(1, v));
+    this._live2dManager.onDrag(clamp(viewX), clamp(viewY));
+  }
+
   private _canvas: HTMLCanvasElement;
   private _view: LAppView;
   private _textureManager: LAppTextureManager;

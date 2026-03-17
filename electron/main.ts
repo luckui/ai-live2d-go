@@ -67,6 +67,15 @@ function createWindow(): void {
   });
   mainWin = win;
 
+  // ── 全屏光标追踪：每帧推送光标屏幕坐标给渲染层，用于 Live2D 目光追踪 ──
+  const cursorInterval = setInterval(() => {
+    if (mainWin && !mainWin.isDestroyed() && !mainWin.webContents.isDestroyed()) {
+      const { x, y } = screen.getCursorScreenPoint();
+      mainWin.webContents.send('cursor-position', { x, y });
+    }
+  }, 16); // ~60fps
+  win.on('closed', () => clearInterval(cursorInterval));
+
   if (process.env['ELECTRON_RENDERER_URL']) {
     win.loadURL(process.env['ELECTRON_RENDERER_URL']);
   } else {
