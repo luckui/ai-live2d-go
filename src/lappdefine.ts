@@ -25,7 +25,11 @@ export const ViewLogicalMaxBottom = -2.0;
 export const ViewLogicalMaxTop = 2.0;
 
 // 资源路径（Vite publicDir = public/，里面有 Resources/ Junction）
-export const ResourcesPath = '/Resources/';
+// 打包后由 src/main.ts 动态覆盖为 file:// 绝对路径
+export let ResourcesPath = '/Resources/';
+export function setResourcesPath(path: string): void {
+  ResourcesPath = path;
+};
 
 // 不使用背景图和按钮图
 export const BackImageName = '';

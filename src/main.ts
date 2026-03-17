@@ -1,7 +1,14 @@
 import { LAppDelegate } from './lappdelegate';
+import * as LAppDefine from './lappdefine';
 import { initChat } from './chat';
 import { initSettings } from './settings';
 import './style.css';
+
+// ─── 打包后用相对路径：electron-vite 将 public/ 输出到 out/renderer/ ──
+// file:// 协议下 /Resources/ 会变成 C:\Resources\，改用 ./Resources/ 相对路径
+if (window.location.protocol === 'file:') {
+  LAppDefine.setResourcesPath('./Resources/');
+}
 
 // ─── 等待 DOM 就绪后初始化 UI ──────────────────────
 document.addEventListener('DOMContentLoaded', () => {

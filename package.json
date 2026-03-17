@@ -7,13 +7,44 @@
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
-    "start": "electron-vite preview"
+    "start": "electron-vite preview",
+    "pack:win": "electron-vite build && electron-builder --win --x64"
+  },
+  "build": {
+    "appId": "com.hiyori.desktop-pet",
+    "productName": "Hiyori",
+    "copyright": "Copyright © 2026",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "out/**/*",
+      "public/**/*"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Hiyori"
+    },
+    "npmRebuild": true,
+    "nativeRebuilder": "sequential"
   },
   "devDependencies": {
     "@electron/rebuild": "^4.0.3",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^25.5.0",
     "electron": "^41.0.2",
+    "electron-builder": "^26.8.1",
     "electron-vite": "^5.0.0",
     "typescript": "^5.9.3",
     "vite": "^6.0.0"
