@@ -119,10 +119,27 @@ async function callWithToolLoop(
         msgBuf.push({ role: 'tool', tool_call_id: tc.id, content: result });
       }
     }
+    // 每轮工具结果回填后注入简洁性提醒，抑制小模型在下一轮输出大段自言自语
+    msgBuf.push({
+      role: 'user',
+      content: '【系统】根据以上工具结果，直接执行下一步操作或给出最终回复。禁止输出推理过程。',
+    });
     // 继续循环，带上工具结果再请求
   }
 
-  throw new Error(`工具调用轮数超过上限 (${MAX_ROUNDS})，请检查工具或模型配置`);
+  // 超出轮数：追加系统提示，让 AI 用自然语言总结失败原因并回复用户
+  msgBuf.push({
+    role: 'user',
+    content:
+      '【系统提示】你已经调用了超过 ' + MAX_ROUNDS + ' 次工具，操作仍未完成。' +
+      '请停止继续调用工具，用自然语言向用户总结：① 你尝试了哪些步骤，② 哪一步卡住了，③ 可能的原因是什么。',
+  });
+  try {
+    const fallback = await fetchCompletion(provider, msgBuf, false); // 不带工具，强制输出文字
+    return stripThinkTags(fallback.choices[0]?.message.content?.trim() ?? '（操作超出轮数，且无法生成总结）');
+  } catch {
+    return `（操作未完成：工具调用超过 ${MAX_ROUNDS} 轮，请检查页面状态后重试）`;
+  }
 }
 
 // ── 主接口 ────────────────────────────────────────────────
