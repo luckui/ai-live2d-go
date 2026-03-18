@@ -8,6 +8,7 @@
 import type { LLMProviderConfig } from '../ai.config';
 import type { DBMessage } from '../db';
 import type { MemoryConfig, SummarizeResult } from './types';
+import { stripThinkTags, buildProviderExtraBody } from '../utils/textUtils';
 
 // ── 提示词 ────────────────────────────────────────────────
 
@@ -32,6 +33,29 @@ const SUMMARY_USER_TEMPLATE = (conversationText: string) => `
 【对话记录】
 ${conversationText}
 `.trim();
+
+// ── 污染检测 ──────────────────────────────────────────────
+
+/**
+ * 判断 LLM 总结结果是否被思考内容污染。
+ * 触发条件（满足任一即视为污染）：
+ *   1. 内容长度超过 maxTokens 的 3 倍（中文约 1 token ≈ 1.5 字符）
+ *   2. 含有明显的英文推理/指令关键词（Thinking Process、Analyze the 等）
+ */
+function isSummaryPolluted(text: string, maxTokens: number): boolean {
+  const charLimit = maxTokens * 4; // 粗估：中文 1 token ≈ 1-2 字符，给 4 倍裕量
+  if (text.length > charLimit) return true;
+  const pollutionMarkers = [
+    'Thinking Process',
+    'thinking process',
+    'Analyze the',
+    '**Analyze',
+    '# Tools',
+    'raise_exception',
+    'tool_call',
+  ];
+  return pollutionMarkers.some((marker) => text.includes(marker));
+}
 
 // ── 核心函数 ──────────────────────────────────────────────
 
@@ -77,7 +101,8 @@ export async function summarizeMessages(
       ],
       max_tokens: config.summaryMaxTokens,
       temperature: config.summaryTemperature,
-      // 总结不需要工具调用
+      // 总结不需要工具调用，但需透传推理参数（防止思考内容污染摘要）
+      ...buildProviderExtraBody(provider),
     }),
   });
 
@@ -92,8 +117,14 @@ export async function summarizeMessages(
 
   if (data.error) throw new Error(data.error.message);
 
-  const text = data.choices[0]?.message.content?.trim() ?? '';
+  const raw = data.choices[0]?.message.content?.trim() ?? '';
+  const text = stripThinkTags(raw);
   // "无" 或空白 → 无有效记忆
   if (!text || text === '无') return null;
+  // 污染检测：总结结果不应超过限制的 3 倍，且不应含 LLM 思考/指令关键词
+  if (isSummaryPolluted(text, config.summaryMaxTokens)) {
+    console.warn('[Memory] 总结结果疑似被思考内容污染，已丢弃（长度:', text.length, '）');
+    return null;
+  }
   return text;
 }

@@ -30,8 +30,21 @@ function loadPersistedConfig(): void {
     const saved = JSON.parse(stored) as typeof aiConfig;
     if (saved.activeProvider) aiConfig.activeProvider = saved.activeProvider;
     if (saved.contextWindowRounds) aiConfig.contextWindowRounds = saved.contextWindowRounds;
+
+    // 记录用户曾主动删除的 provider key
+    const deletedProviders: string[] = saved.deletedProviders ?? [];
+    aiConfig.deletedProviders = deletedProviders;
+
     if (saved.providers && Object.keys(saved.providers).length > 0) {
-      aiConfig.providers = saved.providers; // 完全替换，支持用户删除默认 provider
+      // 以 DB 保存的配置为基础（包含用户的所有修改）
+      const merged: typeof aiConfig.providers = { ...saved.providers };
+      // 将代码里新增的 provider 补入：只要 DB 里没有 且 用户没有主动删除过
+      for (const [key, prov] of Object.entries(aiConfig.providers)) {
+        if (!(key in merged) && !deletedProviders.includes(key)) {
+          merged[key] = prov;
+        }
+      }
+      aiConfig.providers = merged;
     }
   } catch {
     // 解析失败时保持默认配置
@@ -120,13 +133,20 @@ function createWindow(): void {
     activeProvider: aiConfig.activeProvider,
     contextWindowRounds: aiConfig.contextWindowRounds,
     providers: aiConfig.providers,
+    deletedProviders: aiConfig.deletedProviders ?? [],
   }));
 
   ipcMain.handle('settings:save', (_e, newCfg: typeof aiConfig) => {
     aiConfig.activeProvider = newCfg.activeProvider;
     aiConfig.contextWindowRounds = newCfg.contextWindowRounds;
     aiConfig.providers = newCfg.providers; // 完全替换
-    setSetting('llm_config', JSON.stringify(newCfg));
+    aiConfig.deletedProviders = newCfg.deletedProviders ?? [];
+    setSetting('llm_config', JSON.stringify({
+      activeProvider: newCfg.activeProvider,
+      contextWindowRounds: newCfg.contextWindowRounds,
+      providers: newCfg.providers,
+      deletedProviders: newCfg.deletedProviders ?? [],
+    }));
   });
 }
 

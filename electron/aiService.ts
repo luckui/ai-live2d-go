@@ -5,6 +5,7 @@ import { toolRegistry } from './tools/index';
 import type { ChatMessage, ContentPart, ToolCall } from './tools/types';
 import { isToolImageResult } from './tools/types';
 import { memoryManager, globalMemoryManager, recordMessageActivity } from './memory/index';
+import { stripThinkTags, buildProviderExtraBody } from './utils/textUtils';
 
 // ── OpenAI /chat/completions 响应类型 ─────────────────────
 
@@ -40,17 +41,8 @@ async function fetchCompletion(
       max_tokens: provider.maxTokens ?? 1024,
       temperature: provider.temperature ?? 0.85,
       ...(withTools ? { tools: toolRegistry.getSchemas() } : {}),
-      // 推理模型 thinking 预算控制（volcengine/ark API）
-      ...(provider.thinkingBudgetTokens !== undefined
-        ? {
-            thinking: {
-              type: provider.thinkingBudgetTokens === 0 ? 'disabled' : 'auto',
-              budget_tokens: provider.thinkingBudgetTokens,
-            },
-          }
-        : {}),
-      // 额外透传字段（最高优先级，可覆盖上方默认值）
-      ...(provider.extraParams ?? {}),
+      // 推理参数 + 服务商扩展字段（统一由 buildProviderExtraBody 处理）
+      ...buildProviderExtraBody(provider),
     }),
   });
 
@@ -87,7 +79,7 @@ async function callWithToolLoop(
 
     // ── 无工具调用 → 返回最终文本 ──
     if (choice.finish_reason !== 'tool_calls' || !choice.message.tool_calls?.length) {
-      return choice.message.content?.trim() ?? '';
+      return stripThinkTags(choice.message.content?.trim() ?? '');
     }
 
     // ── 有工具调用 → 追加 assistant 消息 ──

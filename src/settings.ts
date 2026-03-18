@@ -17,6 +17,8 @@ interface RuntimeConfig {
   activeProvider: string;
   contextWindowRounds: number;
   providers: Record<string, ProviderConfig>;
+  /** 用户主动删除的 provider key，用于 loadPersistedConfig 合并时跳过 */
+  deletedProviders?: string[];
 }
 
 declare global {
@@ -170,10 +172,14 @@ function deleteProvider(): void {
     const remaining = Object.keys(cfg.providers).filter((k) => k !== editKey);
     cfg.activeProvider = remaining[0];
   }
+  // 记录删除，保证重启后代码默认 provider 里同名的不会被重新补入
+  cfg.deletedProviders = [...(cfg.deletedProviders ?? []), editKey];
   delete cfg.providers[editKey];
   editKey = cfg.activeProvider;
   renderPills();
   renderForm();
+  // 立即持久化，不依赖用户手动点保存
+  void saveSettings();
 }
 
 // ── 设为当前 ──────────────────────────────────────────

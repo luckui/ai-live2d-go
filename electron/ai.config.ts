@@ -48,6 +48,12 @@ export interface AIConfig {
    */
   contextWindowRounds: number;
   providers: Record<string, LLMProviderConfig>;
+  /**
+   * 用户在 UI 中主动删除的 provider key 列表。
+   * loadPersistedConfig 合并时会跳过这些 key，避免代码新增的同名 provider 被复活。
+   * 运行时字段，不需要在 ai.config.ts 里预设。
+   */
+  deletedProviders?: string[];
 }
 
 const aiConfig: AIConfig = {
@@ -65,6 +71,23 @@ const aiConfig: AIConfig = {
       // doubao-seed 是推理模型，thinking tokens 计费。
       // 限制推理预算可大幅降低单轮消耗（默认 2048，可上调至 4096 以许更复杂的工具调用）。
       thinkingBudgetTokens: 2048,
+      systemPrompt:
+        '你是 Hiyori，一个活泼可爱的 Live2D 桌面宠物助手。' +
+        '说话俏皮温柔，喜欢用颜文字和 emoji，但也能认真解答各类问题。' +
+        '请用中文回复，回复简洁自然，不要过于冗长。',
+    },
+
+    qwen35: {
+      type: 'openai-compatible',
+      name: 'Qwen3.5-4B（本地）',
+      baseUrl: process.env['QWEN_BASE_URL'] ?? 'http://localhost:7860',
+      apiKey: process.env['QWEN_API_KEY'] ?? 'EMPTY',           // vLLM/SGLang 本地部署通常不需要 key，填 EMPTY 即可
+      model: 'Qwen3.5-4B',       // 与服务端部署时的 --served-model-name 保持一致
+      temperature: 0.7,
+      maxTokens: 1024,
+      // Qwen3 系列默认开启 thinking，4B 小模型思考收益有限且占满 max_tokens。
+      // vLLM 必须通过 chat_template_kwargs 传递，顶层 enable_thinking 字段会被忽略。
+      extraParams: { chat_template_kwargs: { enable_thinking: false } },
       systemPrompt:
         '你是 Hiyori，一个活泼可爱的 Live2D 桌面宠物助手。' +
         '说话俏皮温柔，喜欢用颜文字和 emoji，但也能认真解答各类问题。' +

@@ -8,6 +8,7 @@
 import type { LLMProviderConfig } from '../ai.config';
 import type { MemoryFragment } from '../db';
 import type { GlobalMemoryConfig } from './types';
+import { stripThinkTags, buildProviderExtraBody } from '../utils/textUtils';
 
 // ── 提示词 ────────────────────────────────────────────────
 
@@ -48,6 +49,21 @@ ${fragmentsSection}
 `.trim();
 }
 
+// ── 污染检测 ──────────────────────────────────────────────
+
+function isRefinePolluted(text: string, maxChars: number): boolean {
+  if (text.length > maxChars * 4) return true;
+  const pollutionMarkers = [
+    'Thinking Process',
+    'thinking process',
+    'Analyze the',
+    '**Analyze',
+    '# Tools',
+    'raise_exception',
+  ];
+  return pollutionMarkers.some((marker) => text.includes(marker));
+}
+
 // ── 核心函数 ──────────────────────────────────────────────
 
 /**
@@ -82,6 +98,8 @@ export async function refineGlobalMemory(
       ],
       max_tokens: config.refinementMaxTokens,
       temperature: config.refinementTemperature,
+      // 透传推理参数（防止思考内容污染全局记忆）
+      ...buildProviderExtraBody(provider),
     }),
   });
 
@@ -96,7 +114,13 @@ export async function refineGlobalMemory(
 
   if (data.error) throw new Error(data.error.message);
 
-  const text = data.choices[0]?.message.content?.trim() ?? '';
+  const raw = data.choices[0]?.message.content?.trim() ?? '';
+  const text = stripThinkTags(raw);
   if (!text || text === '无变化') return null;
+  // 污染检测：全局记忆不应含 LLM 思考/指令关键词
+  if (isRefinePolluted(text, config.globalMemoryMaxChars)) {
+    console.warn('[GlobalMemory] 精炼结果疑似被思考内容污染，已丢弃（长度:', text.length, '）');
+    return null;
+  }
   return text;
 }
