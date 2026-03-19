@@ -29,6 +29,7 @@ function loadPersistedConfig(): void {
   try {
     const saved = JSON.parse(stored) as typeof aiConfig;
     if (saved.activeProvider) aiConfig.activeProvider = saved.activeProvider;
+    if (saved.agentMode) aiConfig.agentMode = saved.agentMode;
     if (saved.contextWindowRounds) aiConfig.contextWindowRounds = saved.contextWindowRounds;
 
     // 记录用户曾主动删除的 provider key
@@ -131,6 +132,7 @@ function createWindow(): void {
   // ── LLM 设置 ──────────────────────────────────────────────
   ipcMain.handle('settings:get', () => ({
     activeProvider: aiConfig.activeProvider,
+    agentMode: aiConfig.agentMode ?? 'off',
     contextWindowRounds: aiConfig.contextWindowRounds,
     providers: aiConfig.providers,
     deletedProviders: aiConfig.deletedProviders ?? [],
@@ -138,11 +140,13 @@ function createWindow(): void {
 
   ipcMain.handle('settings:save', (_e, newCfg: typeof aiConfig) => {
     aiConfig.activeProvider = newCfg.activeProvider;
+    aiConfig.agentMode = newCfg.agentMode ?? 'off';
     aiConfig.contextWindowRounds = newCfg.contextWindowRounds;
     aiConfig.providers = newCfg.providers; // 完全替换
     aiConfig.deletedProviders = newCfg.deletedProviders ?? [];
     setSetting('llm_config', JSON.stringify({
       activeProvider: newCfg.activeProvider,
+      agentMode: newCfg.agentMode ?? 'off',
       contextWindowRounds: newCfg.contextWindowRounds,
       providers: newCfg.providers,
       deletedProviders: newCfg.deletedProviders ?? [],

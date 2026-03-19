@@ -2,59 +2,59 @@
 import aiConfig, { LLMProviderConfig } from './ai.config';
 import { addMessage, getRecentContext, getMessages, renameConversation } from './db';
 import { toolRegistry } from './tools/index';
-import type { ChatMessage, ContentPart, ToolCall } from './tools/types';
+import type { ChatMessage, ContentPart, ToolSchema } from './tools/types';
 import { isToolImageResult } from './tools/types';
 import { memoryManager, globalMemoryManager, recordMessageActivity } from './memory/index';
-import { stripThinkTags, buildProviderExtraBody } from './utils/textUtils';
+import { stripThinkTags } from './utils/textUtils';
+import { fetchCompletion } from './llmClient';
+import { runAgent } from './agent/orchestrator';
 
-// ── OpenAI /chat/completions 响应类型 ─────────────────────
+function getLatestRealUserText(messages: ChatMessage[]): string {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m.role !== 'user') continue;
+    if (typeof m.content !== 'string') continue;
+    const txt = m.content.trim();
+    // 跳过内部注入提示
+    if (txt.startsWith('【系统】') || txt.startsWith('【系统提示】')) continue;
+    return txt;
+  }
+  return '';
+}
 
-interface ChatCompletionResponse {
-  choices: Array<{
-    message: {
-      role: 'assistant';
-      content: string | null;
-      tool_calls?: ToolCall[];
-    };
-    finish_reason: 'stop' | 'tool_calls' | 'length' | string;
-  }>;
-  error?: { message: string };
+function hasBrowserTools(toolSchemas?: ToolSchema[]): boolean {
+  if (!toolSchemas?.length) return false;
+  return toolSchemas.some((t) => t.function.name.startsWith('browser_'));
+}
+
+function isLikelyBrowseIntent(userText: string): boolean {
+  const t = userText.toLowerCase();
+  if (!t) return false;
+  return /(打开|进入|访问|去|导航|网页|网站|页面|链接|网址|url|浏览器|搜索|查找|点击|查看|看看|点开|执行)/i.test(t);
+}
+
+function isLikelyToolFreeBrowserHallucination(replyText: string): boolean {
+  const t = replyText.toLowerCase();
+  return /(已打开|已经打开|已进入|已经进入|我已到达|已访问|当前页面|我在该网站|已跳转|我已搜索|搜索完成|正在打开|正在点击|马上去|马上打开|马上进入|已找到)/i.test(t);
+}
+
+function isLikelyProgressOnlyText(replyText: string): boolean {
+  const t = replyText.toLowerCase();
+  return /(正在|马上|立刻|这就|等一会|稍等|马上去|马上打开|正在打开|正在点击)/i.test(t);
+}
+
+function isLikelyDomParseIntent(userText: string): boolean {
+  const t = userText.toLowerCase();
+  if (!t) return false;
+  return /(解析|html|a元素|标签|outerhtml|源码|原封不动|元素代码|dom)/i.test(t);
+}
+
+function isLikelyCannotParseExcuse(replyText: string): boolean {
+  const t = replyText.toLowerCase();
+  return /(无法|不能|不支持|没有.*功能|没办法|无法直接解析|不能解析html|看不了源码)/i.test(t);
 }
 
 // ── 工具调用循环 ──────────────────────────────────────────
-
-/** 单次向 /chat/completions 发起请求，返回原始响应 */
-async function fetchCompletion(
-  provider: LLMProviderConfig,
-  messages: ChatMessage[],
-  withTools: boolean
-): Promise<ChatCompletionResponse> {
-  const response = await fetch(`${provider.baseUrl}/chat/completions`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${provider.apiKey}`,
-    },
-    body: JSON.stringify({
-      model: provider.model,
-      messages,
-      max_tokens: provider.maxTokens ?? 1024,
-      temperature: provider.temperature ?? 0.85,
-      ...(withTools ? { tools: toolRegistry.getSchemas() } : {}),
-      // 推理参数 + 服务商扩展字段（统一由 buildProviderExtraBody 处理）
-      ...buildProviderExtraBody(provider),
-    }),
-  });
-
-  if (!response.ok) {
-    const errText = await response.text();
-    throw new Error(`HTTP ${response.status}: ${errText}`);
-  }
-
-  const data = (await response.json()) as ChatCompletionResponse;
-  if (data.error) throw new Error(data.error.message);
-  return data;
-}
 
 /**
  * 调用 LLM 并自动处理工具调用循环。
@@ -66,20 +66,64 @@ async function fetchCompletion(
  */
 async function callWithToolLoop(
   provider: LLMProviderConfig,
-  messages: ChatMessage[]
+  messages: ChatMessage[],
+  toolSchemas?: ToolSchema[],
 ): Promise<string> {
-  const withTools = !toolRegistry.isEmpty;
+  const withTools = !!toolSchemas?.length;
   // 在副本上操作，不污染调用方的数组
   const msgBuf: ChatMessage[] = [...messages];
+  let antiHallucinationNudgeUsed = false;
 
   const MAX_ROUNDS = 10;
   for (let round = 0; round < MAX_ROUNDS; round++) {
-    const data = await fetchCompletion(provider, msgBuf, withTools);
+    const data = await fetchCompletion(provider, msgBuf, withTools ? toolSchemas : undefined);
     const choice = data.choices[0];
 
     // ── 无工具调用 → 返回最终文本 ──
     if (choice.finish_reason !== 'tool_calls' || !choice.message.tool_calls?.length) {
-      return stripThinkTags(choice.message.content?.trim() ?? '');
+      const finalText = stripThinkTags(choice.message.content?.trim() ?? '');
+
+      // 防浏览器幻觉：用户要求访问/操作网站，但模型未调用工具却给出“已完成/进行中”口头回复。
+      if (!antiHallucinationNudgeUsed && withTools && hasBrowserTools(toolSchemas)) {
+        const latestUser = getLatestRealUserText(msgBuf);
+        const needToolAction = isLikelyBrowseIntent(latestUser);
+        const fakeDone = isLikelyToolFreeBrowserHallucination(finalText) || isLikelyProgressOnlyText(finalText);
+        if (needToolAction && fakeDone) {
+          antiHallucinationNudgeUsed = true;
+          msgBuf.push({
+            role: 'assistant',
+            content: choice.message.content ?? finalText,
+          });
+          msgBuf.push({
+            role: 'user',
+            content:
+              '【系统纠偏】你刚才在未调用任何浏览器工具的情况下，给出了“已执行/进行中”的口头回复，这是不允许的。' +
+              '必须先调用 browser_get_state / browser_open / browser_find / browser_click 等工具获取真实结果，' +
+              '再基于工具结果回答。禁止臆测当前页面状态，禁止只回复“正在打开/正在点击”。',
+          });
+          continue;
+        }
+
+        const needDomParse = isLikelyDomParseIntent(latestUser);
+        const giveExcuse = isLikelyCannotParseExcuse(finalText);
+        if (needDomParse && giveExcuse) {
+          antiHallucinationNudgeUsed = true;
+          msgBuf.push({
+            role: 'assistant',
+            content: choice.message.content ?? finalText,
+          });
+          msgBuf.push({
+            role: 'user',
+            content:
+              '【系统纠偏】你具备 DOM 解析工具，不能以“无法解析 HTML”作为回复。' +
+              '请调用 browser_get_elements_html（必要时结合 browser_find / browser_get_links）获取真实 outerHTML，' +
+              '并把元素原文返回给用户。',
+          });
+          continue;
+        }
+      }
+
+      return finalText;
     }
 
     // ── 有工具调用 → 追加 assistant 消息 ──
@@ -131,11 +175,11 @@ async function callWithToolLoop(
   msgBuf.push({
     role: 'user',
     content:
-      '【系统提示】你已经调用了超过 ' + MAX_ROUNDS + ' 次工具，操作仍未完成。' +
+      '【系统提示】你已经连续调用了 ' + MAX_ROUNDS + ' 轮工具，操作仍未完成。' +
       '请停止继续调用工具，用自然语言向用户总结：① 你尝试了哪些步骤，② 哪一步卡住了，③ 可能的原因是什么。',
   });
   try {
-    const fallback = await fetchCompletion(provider, msgBuf, false); // 不带工具，强制输出文字
+    const fallback = await fetchCompletion(provider, msgBuf); // 不带工具，强制输出文字
     return stripThinkTags(fallback.choices[0]?.message.content?.trim() ?? '（操作超出轮数，且无法生成总结）');
   } catch {
     return `（操作未完成：工具调用超过 ${MAX_ROUNDS} 轮，请检查页面状态后重试）`;
@@ -178,7 +222,18 @@ export async function sendChatMessage(
   // 3. 调用 AI（含工具调用循环）
   let replyContent: string;
   try {
-    replyContent = await callWithToolLoop(provider, messages);
+    const mode = aiConfig.agentMode ?? 'off';
+    if (mode === 'force') {
+      // 强制 Agent：用户输入直接作为目标执行（显式开关即视为用户授权）
+      replyContent = await runAgent(userContent, provider);
+    } else {
+      // 普通模式：禁用 agent_start，避免未获同意就进入 planner
+      // getSchemasForMode 会在有 Skill 时自动隐藏 sys_* 原子工具，降低 AI 选择压力
+      const normalTools = toolRegistry.isEmpty
+        ? undefined
+        : toolRegistry.getSchemasForMode().filter(s => s.function.name !== 'agent_start');
+      replyContent = await callWithToolLoop(provider, messages, normalTools);
+    }
   } catch (e) {
     replyContent = `（请求失败：${(e as Error).message}）`;
   }

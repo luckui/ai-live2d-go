@@ -72,8 +72,8 @@ export class GlobalMemoryManager {
    *    注意：LLM 调用失败时不推进游标，留待下次重试
    */
   private async doRefine(conversationId: string): Promise<void> {
-    const provider = aiConfig.providers[aiConfig.activeProvider];
-    if (!provider) return;
+    const activeProvider = aiConfig.providers[aiConfig.activeProvider];
+    if (!activeProvider) return;
 
     const allFragments = getMemoryFragments(conversationId);
     const cursor = getGlobalMemoryCursor(conversationId);
@@ -86,8 +86,44 @@ export class GlobalMemoryManager {
 
     const currentGlobal = getGlobalMemory();
 
-    // 调用 LLM 精炼（失败时抛出，由 refineAsync 捕获，游标不推进）
-    const updated = await refineGlobalMemory(provider, currentGlobal, newFragments, this.config);
+    // provider 尝试顺序：当前激活 provider 优先，其次尝试其他已配置 provider（带 apiKey）
+    const providerOrder = [
+      aiConfig.activeProvider,
+      ...Object.keys(aiConfig.providers).filter((k) => k !== aiConfig.activeProvider),
+    ];
+
+    let updated: string | null = null;
+    let usedProviderKey: string | null = null;
+    let lastErr: unknown = null;
+
+    for (const key of providerOrder) {
+      const p = aiConfig.providers[key];
+      if (!p) continue;
+      if (!p.apiKey) continue;
+
+      try {
+        updated = await refineGlobalMemory(
+          p,
+          currentGlobal,
+          newFragments,
+          this.config,
+          conversationId
+        );
+        usedProviderKey = key;
+        break;
+      } catch (e) {
+        lastErr = e;
+        console.warn(
+          `[GlobalMemory] provider=${key} 精炼失败，尝试下一个 provider: ${(e as Error).message}`
+        );
+      }
+    }
+
+    if (!usedProviderKey) {
+      throw (lastErr instanceof Error
+        ? lastErr
+        : new Error('[GlobalMemory] 所有 provider 均精炼失败'));
+    }
 
     // LLM 成功返回后推进游标（无论有无新内容）
     setGlobalMemoryCursor(conversationId, allFragments.length);
@@ -95,12 +131,12 @@ export class GlobalMemoryManager {
     if (updated) {
       setGlobalMemory(updated);
       console.info(
-        `[GlobalMemory] 对话 ${conversationId.slice(0, 8)}… 全局记忆已更新` +
+        `[GlobalMemory] 对话 ${conversationId.slice(0, 8)}… 全局记忆已更新（provider=${usedProviderKey}）` +
         `（整合 ${newFragments.length} 条新片段）`
       );
     } else {
       console.info(
-        `[GlobalMemory] 对话 ${conversationId.slice(0, 8)}… 新片段无需更新全局记忆，跳过`
+        `[GlobalMemory] 对话 ${conversationId.slice(0, 8)}… 模型判断“无变化”（provider=${usedProviderKey}），仅推进游标`
       );
     }
   }

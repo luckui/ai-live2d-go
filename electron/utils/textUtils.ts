@@ -33,6 +33,21 @@ export function buildProviderExtraBody(provider: {
   thinkingBudgetTokens?: number;
   extraParams?: Record<string, unknown>;
 }): Record<string, unknown> {
+  const extra = { ...(provider.extraParams ?? {}) };
+
+  // 兼容历史配置：部分 Qwen/OpenAI-compatible 服务将 enable_thinking
+  // 错配在顶层 extraParams；这里自动下沉到 chat_template_kwargs。
+  if (
+    Object.prototype.hasOwnProperty.call(extra, 'enable_thinking') &&
+    typeof extra['enable_thinking'] === 'boolean' &&
+    !Object.prototype.hasOwnProperty.call(extra, 'chat_template_kwargs')
+  ) {
+    extra['chat_template_kwargs'] = {
+      enable_thinking: extra['enable_thinking'],
+    };
+    delete extra['enable_thinking'];
+  }
+
   return {
     ...(provider.thinkingBudgetTokens !== undefined
       ? {
@@ -42,6 +57,6 @@ export function buildProviderExtraBody(provider: {
           },
         }
       : {}),
-    ...(provider.extraParams ?? {}),
+    ...extra,
   };
 }

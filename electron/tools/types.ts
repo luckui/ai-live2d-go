@@ -78,6 +78,12 @@ export interface ToolDefinition<TParams = Record<string, unknown>> {
    * @returns 字符串结果或含图像的 ToolImageResult，aiService 会自动处理注入
    */
   execute: (params: TParams) => Promise<ToolExecuteResult> | ToolExecuteResult;
+  /**
+   * 标记此工具为高级 Skill（封装了多步原子操作的复合能力）。
+   * ToolRegistry.getSchemasForMode('skill-first') 时，若存在 Skill，
+   * 会优先暴露 Skill 并收起部分冗余的底层原子工具，降低 AI 选择压力。
+   */
+  isSkill?: boolean;
 }
 
 // ── OpenAI Chat Message 类型（工具调用感知）──────────────

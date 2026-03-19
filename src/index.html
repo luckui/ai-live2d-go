@@ -99,6 +99,13 @@
               <input id="s-rounds" type="number" min="1" max="200" class="s-input" />
               <span class="s-hint">每次请求携带最近 N 轮上下文（1轮 = 1问1答，超出部分仍存数据库）</span>
             </label>
+            <label class="s-label">Agent 模式
+              <select id="s-agent-mode" class="s-input">
+                <option value="off">关闭（默认）：普通聊天，不自动进入 Agent</option>
+                <option value="force">强制：每条消息都走 Agent 自动规划执行</option>
+              </select>
+              <span class="s-hint">建议日常用“关闭”，需要全自动时再切到“强制”</span>
+            </label>
           </section>
 
           <!-- 服务商列表 -->

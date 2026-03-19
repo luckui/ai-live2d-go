@@ -15,6 +15,7 @@ interface ProviderConfig {
 
 interface RuntimeConfig {
   activeProvider: string;
+  agentMode?: 'off' | 'force';
   contextWindowRounds: number;
   providers: Record<string, ProviderConfig>;
   /** 用户主动删除的 provider key，用于 loadPersistedConfig 合并时跳过 */
@@ -55,6 +56,9 @@ function syncFormToCfg(): void {
 
   const rounds = parseInt((document.getElementById('s-rounds') as HTMLInputElement).value, 10);
   if (rounds > 0) cfg.contextWindowRounds = rounds;
+
+  const mode = (document.getElementById('s-agent-mode') as HTMLSelectElement).value;
+  cfg.agentMode = mode === 'force' ? 'force' : 'off';
 }
 
 function renderForm(): void {
@@ -119,6 +123,7 @@ async function loadSettingsUI(): Promise<void> {
   editKey = cfg.activeProvider;
   (document.getElementById('s-rounds') as HTMLInputElement).value =
     String(cfg.contextWindowRounds);
+  (document.getElementById('s-agent-mode') as HTMLSelectElement).value = cfg.agentMode ?? 'off';
   renderPills();
   renderForm();
 }

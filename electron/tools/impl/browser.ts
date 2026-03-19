@@ -17,6 +17,9 @@
  *   13. browser_get_inputs  - 扫描表单输入字段（含富文本编辑器），填表前必须调用
  *   14. browser_get_buttons - 扫描可点击按钮，点击前先调用
  *   15. browser_type_rich   - 向富文本编辑器（contenteditable div）输入文字
+ *   16. browser_find        - 统一元素查找（button+link+keyword模糊过滤，首选）
+ *   17. browser_get_state   - 查当前 URL/标题（零开销，操作前先确认位置）
+ *   18. browser_get_links   - 扫描 <a> 链接，拿到 href 后直接 browser_open 跳过点击
  *
  * ── 使用决策树 ───────────────────────────────────────────────────
  *
@@ -31,6 +34,11 @@
  *    ② browser_click(Playwright selector)        → 标准点击，首选
  *    ③ browser_click(Playwright sel, force=true) → ②超时时强制点击
  *    ④ browser_js_click(CSS selector)            → ③仍失败时 JS 原生点击（最终兜底）
+ *
+ *  【点击 <a> 链接（搜索结果/弹窗内列表）】
+ *    ① browser_click(text=链接文字)              → 标准点击，首选
+ *    ② 点击超时/失败 → browser_get_links         → 拿到完整 href
+ *    ③ browser_open(href)                        → 直接导航，彻底绕过点击问题
  *
  *  【观察/确认页面状态】
  *    browser_screenshot  →  截图，从图像判断当前状态再决策
@@ -88,8 +96,9 @@ const browserOpen: ToolDefinition<OpenParams> = {
       description:
         '打开浏览器并导航到指定网址或搜索关键词。' +
         '如果参数是完整网址（以 http:// 或 https:// 开头），直接打开；' +
-        '否则用 Google 搜索该关键词。' +
-        '调用后建议用 browser_screenshot 查看页面内容。',
+        '若要进行浏览器级 Google 搜索，必须使用前缀 google:关键词（例如 google:playwright 教程）。' +
+        '【重要】在某网站内搜索内容请使用该网站搜索框（browser_find + browser_type），不要调用本工具做站内搜索。' +
+        '不确定当前是否已在目标页时，先调用 browser_get_state 确认 URL，避免重复导航。',
       parameters: {
         type: 'object',
         properties: {
@@ -105,9 +114,23 @@ const browserOpen: ToolDefinition<OpenParams> = {
   },
 
   async execute({ query }) {
-    const url = /^https?:\/\//i.test(query.trim())
-      ? query.trim()
-      : `https://www.google.com/search?q=${encodeURIComponent(query)}`;
+    const q = query.trim();
+    const isUrl = /^https?:\/\//i.test(q);
+    const googleMatch = q.match(/^google\s*:\s*(.+)$/i);
+
+    if (!isUrl && !googleMatch) {
+      const current = await pageInfo();
+      return (
+        '⚠️ browser_open 已阻止本次操作：这看起来不是网址，也不是显式 Google 搜索。\n' +
+        '若你要在当前网站内搜索，请改用该站点搜索框（browser_find 定位搜索框 + browser_type 输入）。\n' +
+        '若你确实要全网搜索，请使用格式：google:关键词。\n' +
+        `当前页面：${current}`
+      );
+    }
+
+    const url = isUrl
+      ? q
+      : `https://www.google.com/search?q=${encodeURIComponent(googleMatch?.[1] ?? '')}`;
 
     const page = await browserSession.ensurePage();
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
@@ -542,18 +565,68 @@ const browserJsClick: ToolDefinition<JsClickParams> = {
     if (!page) return '❌ 浏览器未打开，请先调用 browser_open';
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const clicked: boolean = await (page.evaluate as any)(`
+    const res: { ok: boolean; reason?: string; detail?: string } = await (page.evaluate as any)(`
       (() => {
-        const el = document.querySelector(${JSON.stringify(selector)});
-        if (!el) return false;
-        el.click();
-        return true;
+        const selector = ${JSON.stringify(selector)};
+        const all = Array.from(document.querySelectorAll(selector));
+        if (all.length === 0) return { ok: false, reason: 'not_found' };
+
+        const isVisible = (el) => {
+          const rect = el.getBoundingClientRect();
+          if (rect.width <= 0 || rect.height <= 0) return false;
+          const st = window.getComputedStyle(el);
+          if (st.display === 'none' || st.visibility === 'hidden' || st.opacity === '0') return false;
+          return true;
+        };
+
+        const visibles = all.filter(isVisible);
+        const pick = (list) => {
+          for (const el of list) {
+            const r = el.getBoundingClientRect();
+            const cx = Math.min(window.innerWidth - 1, Math.max(0, r.left + r.width / 2));
+            const cy = Math.min(window.innerHeight - 1, Math.max(0, r.top + r.height / 2));
+            const top = document.elementFromPoint(cx, cy);
+            if (!top) continue;
+            if (top === el || el.contains(top)) return el;
+          }
+          return list[0] || null;
+        };
+
+        const target = pick(visibles.length ? visibles : all);
+        if (!target) return { ok: false, reason: 'no_target' };
+
+        try {
+          target.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
+        } catch {}
+
+        try { target.focus?.(); } catch {}
+
+        const opts = { bubbles: true, cancelable: true, composed: true };
+        try {
+          target.dispatchEvent(new PointerEvent('pointerdown', { ...opts, pointerType: 'mouse', button: 0 }));
+          target.dispatchEvent(new MouseEvent('mousedown', { ...opts, button: 0 }));
+          target.dispatchEvent(new PointerEvent('pointerup', { ...opts, pointerType: 'mouse', button: 0 }));
+          target.dispatchEvent(new MouseEvent('mouseup', { ...opts, button: 0 }));
+          target.dispatchEvent(new MouseEvent('click', { ...opts, button: 0 }));
+        } catch {
+          // 老环境降级
+          target.dispatchEvent(new MouseEvent('mousedown', { ...opts, button: 0 }));
+          target.dispatchEvent(new MouseEvent('mouseup', { ...opts, button: 0 }));
+          target.dispatchEvent(new MouseEvent('click', { ...opts, button: 0 }));
+        }
+
+        // 某些组件只监听原生 click 方法
+        try { target.click?.(); } catch {}
+
+        const tag = target.tagName?.toLowerCase?.() || 'unknown';
+        const cls = (target.className || '').toString().trim().slice(0, 80);
+        return { ok: true, detail: '<' + tag + ' class="' + cls + '">' };
       })()
     `);
 
-    if (!clicked) return `❌ 未找到元素：${selector}`;
+    if (!res.ok) return `❌ JS 点击失败：${res.reason ?? 'unknown'}（selector=${selector}）`;
     await waitSettle();
-    return `✅ JS点击 [${selector}] → ${await pageInfo()}`;
+    return `✅ JS点击 [${selector}] ${res.detail ? `命中 ${res.detail}` : ''} → ${await pageInfo()}`;
   },
 };
 
@@ -784,7 +857,7 @@ const browserGetButtons: ToolDefinition<Record<string, never>> = {
     function: {
       name: 'browser_get_buttons',
       description:
-        '扫描当前页面所有可见的可点击按钮（button、[role=button]、a、input[type=submit] 等），' +
+        '扫描当前页面所有可见的可点击按钮（button、[role=button]、a、input[type=submit]，以及被样式伪装成按钮的 div/span 等），' +
         '返回每个按钮的文字内容、id、CSS类，以及可直接使用的 Playwright selector 和 CSS selector，' +
         '并用 🔑 标记疑似登录/提交/确认的主要操作按钮。' +
         '【重要】点击任何按钮前必须先调用此工具，直接使用返回的 selector，不要从截图猜测。' +
@@ -809,9 +882,24 @@ const browserGetButtons: ToolDefinition<Record<string, never>> = {
         const seen = new Set();
         const candidates = [
           ...document.querySelectorAll(
-            'button, [role="button"], input[type="submit"], input[type="button"], a[href]'
+            'button, [role="button"], input[type="submit"], input[type="button"], a[href], [onclick], [tabindex], [data-testid*="button" i], [class*="btn" i], [class*="button" i]'
           )
         ];
+
+        // 补充：常见“伪按钮”容器（div/span/li）
+        document.querySelectorAll('div, span, li').forEach((el) => {
+          if (candidates.includes(el)) return;
+          const cls = (el.className || '').toString();
+          const role = (el.getAttribute('role') || '').toLowerCase();
+          const hasTabindex = el.hasAttribute('tabindex');
+          const style = window.getComputedStyle(el);
+          const clickableLike =
+            role === 'button' ||
+            hasTabindex ||
+            style.cursor === 'pointer' ||
+            /(^|\s)(btn|button|submit|clickable)(-|_|\s|$)/i.test(cls);
+          if (clickableLike) candidates.push(el);
+        });
         let idx = 0;
         candidates.forEach((el) => {
           const rect = el.getBoundingClientRect();
@@ -886,6 +974,416 @@ const browserGetButtons: ToolDefinition<Record<string, never>> = {
   },
 };
 
+// ── 16. browser_find ─────────────────────────────────────────────
+
+/**
+ * 统一元素查找工具：一次性扫描所有可交互元素（button + a + role=button + onclick...），
+ * 支持关键词模糊过滤，并直接告知 AI 应该用哪个工具执行下一步。
+ *
+ * 核心价值：AI 不需要判断目标是 button 还是 <a>，此工具统一返回。
+ *   - <a> 元素：el.href 已自动解析为绝对 URL，推荐操作 browser_open(href)
+ *   - 按钮元素：推荐操作 browser_click(selector)
+ */
+interface FindParams {
+  keyword?: string;
+  keywords?: string[];
+  matchMode?: 'any' | 'all';
+}
+
+const browserFind: ToolDefinition<FindParams> = {
+  schema: {
+    type: 'function',
+    function: {
+      name: 'browser_find',
+      description:
+        '【统一元素查找】扫描当前页面可操作元素（button / <a>链接 / 输入框 input / textarea / select / 富文本）。' +
+        '也会识别 div/span 伪按钮（cursor:pointer、role=button、tabindex、btn/button 类名等）。' +
+        '支持多关键词匹配，自动给出下一步操作建议。\n' +
+        '无需区分目标是 button / a / 输入框，返回结果中"→ 操作"列直接告诉你用哪个工具：\n' +
+        '  • → browser_open("https://...")  ：<a>链接，直接导航无需点击\n' +
+        '  • → browser_click("text=...")    ：按钮/交互元素，标准点击\n' +
+        '  • → browser_type("selector", "...")：普通输入框\n' +
+        '  • → browser_type_rich("selector", "...")：富文本编辑器\n' +
+        '【用法】\n' +
+        '  不传 keyword/keywords → 列出页面所有可见可操作元素（最多60个）\n' +
+        '  传 keyword            → 单关键词（也可写成"词1 词2"，会自动拆分）\n' +
+        '  传 keywords           → 多关键词数组（推荐）\n' +
+        '  matchMode=all         → 必须同时命中全部关键词（默认 any）\n' +
+        '【替代场景】任何需要"找到某个按钮或链接"的情况，用此工具代替分别调用 browser_get_buttons + browser_get_links。',
+      parameters: {
+        type: 'object',
+        properties: {
+          keyword: {
+            type: 'string',
+            description:
+              '单个关键词（可选）。也支持写成"词1 词2"或"词1,词2"，内部会自动拆分为多关键词。',
+          },
+          keywords: {
+            type: 'array',
+            items: { type: 'string' },
+            description:
+              '多关键词数组（推荐）。例如 ["搜索", "帖子", "输入"]。',
+          },
+          matchMode: {
+            type: 'string',
+            enum: ['any', 'all'],
+            description: '关键词匹配模式：any=命中任一关键词；all=必须全部命中。默认 any。',
+          },
+        },
+        required: [],
+      },
+    },
+  },
+
+  async execute({ keyword = '', keywords = [], matchMode = 'any' }) {
+    const page = browserSession.currentPage;
+    if (!page) return '❌ 浏览器未打开，请先调用 browser_open';
+
+    const fromKeyword = keyword
+      .split(/[\s,，;；、|]+/)
+      .map(s => s.trim().toLowerCase())
+      .filter(Boolean);
+    const fromKeywords = (keywords ?? [])
+      .map(s => (s ?? '').trim().toLowerCase())
+      .filter(Boolean);
+    const keywordTokens = Array.from(new Set([...fromKeyword, ...fromKeywords]));
+
+    const tokensJson = JSON.stringify(keywordTokens);
+    const modeJson = JSON.stringify(matchMode === 'all' ? 'all' : 'any');
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const elements: Array<Record<string, string>> = await (page.evaluate as any)(/* js */`
+      (() => {
+        const tokens = ${tokensJson};
+        const mode = ${modeJson};
+        const results = [];
+        const seen = new Set();
+
+        const candidates = Array.from(document.querySelectorAll(
+          'button, a[href], [role="button"], input, textarea, select, [contenteditable="true"], [onclick], [tabindex], [data-testid*="button" i], [class*="btn" i], [class*="button" i]'
+        ));
+        // 追加有 onclick 但不在上述选择器内的元素
+        document.querySelectorAll('[onclick]').forEach((el) => {
+          if (!candidates.includes(el)) candidates.push(el);
+        });
+        // 补充：常见伪按钮容器
+        document.querySelectorAll('div, span, li').forEach((el) => {
+          if (candidates.includes(el)) return;
+          const cls = (el.className || '').toString();
+          const role = (el.getAttribute('role') || '').toLowerCase();
+          const hasTabindex = el.hasAttribute('tabindex');
+          const style = window.getComputedStyle(el);
+          const clickableLike =
+            role === 'button' ||
+            hasTabindex ||
+            style.cursor === 'pointer' ||
+            /(^|\s)(btn|button|submit|clickable)(-|_|\s|$)/i.test(cls);
+          if (clickableLike) candidates.push(el);
+        });
+
+        candidates.forEach((el) => {
+          const rect = el.getBoundingClientRect();
+          if (rect.width === 0 || rect.height === 0) return;
+          const style = window.getComputedStyle(el);
+          if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return;
+
+          const tag = el.tagName.toLowerCase();
+          const text = (
+            el.innerText || el.value ||
+            el.getAttribute('aria-label') || el.getAttribute('title') || el.getAttribute('alt') || ''
+          ).trim().replace(/\\s+/g, ' ').slice(0, 80);
+          const id = el.id || '';
+          const name = el.getAttribute('name') || '';
+          const placeholder = el.getAttribute('placeholder') || '';
+          // el.href (DOM property) 已自动解析为完整 URL（相对路径 /post/123 → https://xxx.com/post/123）
+          const href = tag === 'a' ? (el.href || '') : '';
+          const isContentEditable = el.getAttribute('contenteditable') === 'true';
+
+          // 过滤不可用输入
+          if (tag === 'input') {
+            const inputType = (el.getAttribute('type') || 'text').toLowerCase();
+            if (inputType === 'hidden') return;
+          }
+
+          // 关键词过滤：文字/id/name/placeholder/href 任一字段匹配
+          if (tokens.length) {
+            const haystack = (text + ' ' + id + ' ' + name + ' ' + placeholder + ' ' + href).toLowerCase();
+            const hitCount = tokens.filter(t => haystack.includes(t)).length;
+            if (mode === 'all' && hitCount < tokens.length) return;
+            if (mode === 'any' && hitCount === 0) return;
+          }
+
+          const uid = tag + '||' + id + '||' + text.slice(0, 30);
+          if (seen.has(uid)) return;
+          seen.add(uid);
+
+          const type = el.getAttribute('type') || '';
+          const classes = [...el.classList]
+            .filter(c => c.length > 0 && c.length < 40)
+            .slice(0, 5).join(' ');
+
+          // CSS selector
+          let cssSelector = '';
+          if (id) {
+            cssSelector = '#' + id;
+          } else {
+            const mainClass = [...el.classList].find(
+              c => c.length > 1 && c.length < 30 &&
+                   !/^(flex|grid|w-|h-|p-|m-|text-|bg-|border-|rounded|cursor|font|items-|justify-)/.test(c)
+            );
+            cssSelector = mainClass ? tag + '.' + mainClass
+                        : type && type !== 'text' ? tag + '[type="' + type + '"]'
+                        : tag;
+          }
+          const pwSelector = text ? 'text=' + text : cssSelector;
+
+          const isFormField = isContentEditable || tag === 'textarea' || tag === 'select' ||
+            (tag === 'input' && !['button', 'submit', 'reset', 'checkbox', 'radio', 'file', 'image'].includes((type || '').toLowerCase()));
+
+          // 推荐操作（<a> 直接导航；输入框建议输入；其余点击）
+          const action = href
+            ? 'browser_open("' + href + '")'
+            : isContentEditable
+              ? 'browser_type_rich("' + cssSelector + '", "...")'
+              : isFormField
+                ? 'browser_type("' + cssSelector + '", "...")'
+                : 'browser_click("' + pwSelector + '")';
+
+          results.push({ tag, text, id, name, placeholder, href, classes, type, cssSelector, pwSelector, action });
+        });
+
+        return results.slice(0, 60);
+      })()
+    `);
+
+    if (elements.length === 0) {
+      const hint = keywordTokens.length ? `关键词(${keywordTokens.join(' / ')})` : '页面上';
+      return `⚠️ ${hint}未找到可操作元素`;
+    }
+
+    const lines = elements.map((el, i) => {
+      const parts: string[] = [`[${i + 1}] <${el.tag}>`];
+      if (el.text)    parts.push(`"${el.text}"`);
+      if (el.id)      parts.push(`#${el.id}`);
+      if (el.name)    parts.push(`name="${el.name}"`);
+      if (el.placeholder) parts.push(`placeholder="${el.placeholder}"`);
+      if (el.href)    parts.push(`href="${el.href}"`);
+      if (el.classes) parts.push(`class="${el.classes}"`);
+      parts.push(`→ ${el.action}`);
+      return '  ' + parts.join('  ');
+    });
+
+    const kw = keywordTokens.length ? `关键词(${keywordTokens.join(' / ')})相关的` : '';
+    return (
+      `🔍 ${kw}可操作元素（共 ${elements.length} 个，matchMode=${matchMode}）：\n${lines.join('\n')}\n\n` +
+      `💡 直接执行"→ 操作"列：\n` +
+      `  • browser_open(href)   ← <a>链接，直接导航，无需点击\n` +
+      `  • browser_click(sel)   ← 按钮/交互元素，按 ②③④ 决策树点击\n` +
+      `  • browser_type(sel, text) / browser_type_rich(sel, text) ← 输入框/富文本`
+    );
+  },
+};
+
+// ── 17. browser_get_state ───────────────────────────────────────────
+
+/**
+ * 轻量状态查询：返回当前 URL、标题、标签页数，不截图不扫 DOM，几乎零开销。
+ * AI 在执行任何操作前若不确定当前页面，主动调用此工具，而非盲目重新导航。
+ */
+const browserGetState: ToolDefinition<Record<string, never>> = {
+  schema: {
+    type: 'function',
+    function: {
+      name: 'browser_get_state',
+      description:
+        '查询当前浏览器状态：返回当前页面的 URL、标题和标签页数量。零开销，不截图不扫描 DOM。\n' +
+        '【何时调用】\n' +
+        '  • 收到用户新任务，不确定浏览器当前在哪个页面\n' +
+        '  • 准备调用 browser_open 前，先确认是否已在目标页（避免重复导航）\n' +
+        '  • 操作后想确认是否跳转，但不需要看截图',
+      parameters: { type: 'object', properties: {}, required: [] },
+    },
+  },
+
+  async execute() {
+    const page = browserSession.currentPage;
+    if (!page) return '🔴 浏览器未打开（尚未调用过 browser_open）';
+
+    const title   = await page.title().catch(() => '（无标题）');
+    const url     = page.url();
+    const all     = browserSession.pages;
+    const idx     = all.indexOf(page);
+    const tabInfo = all.length > 1
+      ? `共 ${all.length} 个标签页，当前第 ${idx + 1} 个`
+      : '共 1 个标签页';
+
+    return `🌐 当前页面（${tabInfo}）\n  标题：${title}\n  URL ：${url}`;
+  },
+};
+
+// ── 18. browser_get_links ─────────────────────────────────────────
+
+/**
+ * 扫描当前页面（含弹窗/对话框内部）所有可见 <a> 标签，
+ * 返回链接文字 + 完整 href。
+ *
+ * 核心用途：弹窗/搜索结果列表里的帖子链接点击失败时，
+ * 用此工具拿到 href 直接调用 browser_open 跳转，无需点击。
+ */
+const browserGetLinks: ToolDefinition<Record<string, never>> = {
+  schema: {
+    type: 'function',
+    function: {
+      name: 'browser_get_links',
+      description:
+        '扫描当前页面（含弹窗/模态框内部）所有可见 <a> 标签，' +
+        '返回每条链接的文字和完整 URL（href）。\n' +
+        '【核心用途】当 browser_click 点击链接失败或元素被遮罩时，' +
+        '用此工具拿到目标 href，直接调用 browser_open(href) 跳转，完全绕过点击问题。\n' +
+        '典型场景：搜索结果弹窗里有帖子链接但点击不上 → browser_get_links → browser_open(帖子href)。',
+      parameters: { type: 'object', properties: {}, required: [] },
+    },
+  },
+
+  async execute() {
+    const page = browserSession.currentPage;
+    if (!page) return '❌ 浏览器未打开，请先调用 browser_open';
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const links: Array<Record<string, string>> = await (page.evaluate as any)(/* js */`
+      (() => {
+        const results = [];
+        const seen = new Set();
+        const pageOrigin = location.origin;
+        document.querySelectorAll('a[href]').forEach((el) => {
+          const href = el.href || '';
+          // 过滤 javascript: / 纯锚点 / 空链接
+          if (!href || href.startsWith('javascript:') || href === pageOrigin + '/#' || href === '#') return;
+          const rect = el.getBoundingClientRect();
+          if (rect.width === 0 && rect.height === 0) return;
+          const style = window.getComputedStyle(el);
+          if (style.display === 'none' || style.visibility === 'hidden') return;
+          const text = (el.innerText || el.getAttribute('title') || el.getAttribute('aria-label') || '')
+            .trim().replace(/\\s+/g, ' ').slice(0, 80);
+          const key = href + '||' + text;
+          if (seen.has(key)) return;
+          seen.add(key);
+          const isExternal = !href.startsWith(pageOrigin);
+          results.push({ text: text || '（无文字）', href, external: isExternal ? '1' : '0' });
+        });
+        return results.slice(0, 60); // 最多返回 60 条防止过长
+      })()
+    `);
+
+    if (links.length === 0) return '⚠️ 当前页面未找到可见的 <a> 链接';
+
+    const lines = links.map((l, i) => {
+      const extFlag = l.external === '1' ? ' [外链]' : '';
+      return `  [${i + 1}]${extFlag} "${l.text}"  →  ${l.href}`;
+    });
+
+    return (
+      `🔗 当前页面共 ${links.length} 条可见链接：\n${lines.join('\n')}\n\n` +
+      `💡 点击链接失败时：直接用目标 href 调用 browser_open 跳转，无需点击。`
+    );
+  },
+};
+
+// ── 19. browser_get_elements_html ─────────────────────────────────
+
+interface GetElementsHtmlParams {
+  keyword?: string;
+  tag?: string;
+  limit?: number;
+}
+
+const browserGetElementsHtml: ToolDefinition<GetElementsHtmlParams> = {
+  schema: {
+    type: 'function',
+    function: {
+      name: 'browser_get_elements_html',
+      description:
+        '按关键词解析并返回页面元素的原始 HTML（outerHTML）。' +
+        '适用于用户要求“原封不动给我 a 元素 / div 按钮源码”之类场景。' +
+        '可按 tag 限定元素类型（如 a/div/button），并按关键词过滤文字、href、title、aria-label。',
+      parameters: {
+        type: 'object',
+        properties: {
+          keyword: {
+            type: 'string',
+            description: '关键词过滤（可选），例如：间谍过家家、收到的赞。',
+          },
+          tag: {
+            type: 'string',
+            description: '标签过滤（可选），例如：a / div / button。默认 *（全部标签）。',
+          },
+          limit: {
+            type: 'number',
+            description: '最多返回条数，默认 5，最大 20。',
+          },
+        },
+        required: [],
+      },
+    },
+  },
+
+  async execute({ keyword = '', tag = '*', limit = 5 }) {
+    const page = browserSession.currentPage;
+    if (!page) return '❌ 浏览器未打开，请先调用 browser_open';
+
+    const kw = keyword.trim().toLowerCase();
+    const t = (tag || '*').trim().toLowerCase();
+    const safeTag = /^[a-z][a-z0-9-]*$/.test(t) ? t : '*';
+    const max = Math.max(1, Math.min(20, Math.floor(limit || 5)));
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const items: Array<Record<string, string>> = await (page.evaluate as any)(/* js */`
+      (() => {
+        const kw = ${JSON.stringify(kw)};
+        const tag = ${JSON.stringify(safeTag)};
+        const max = ${JSON.stringify(max)};
+        const nodes = Array.from(document.querySelectorAll(tag));
+        const out = [];
+
+        for (const el of nodes) {
+          if (out.length >= max) break;
+
+          const rect = el.getBoundingClientRect();
+          const st = window.getComputedStyle(el);
+          if ((rect.width === 0 && rect.height === 0) || st.display === 'none' || st.visibility === 'hidden') continue;
+
+          const text = (el.innerText || '').trim().replace(/\s+/g, ' ').slice(0, 120);
+          const href = (el.tagName.toLowerCase() === 'a' ? (el.href || '') : '');
+          const title = el.getAttribute('title') || '';
+          const aria = el.getAttribute('aria-label') || '';
+          const haystack = (text + ' ' + href + ' ' + title + ' ' + aria).toLowerCase();
+          if (kw && !haystack.includes(kw)) continue;
+
+          out.push({
+            tag: el.tagName.toLowerCase(),
+            text,
+            href,
+            outerHTML: (el.outerHTML || '').trim(),
+          });
+        }
+        return out;
+      })()
+    `);
+
+    if (items.length === 0) {
+      return `⚠️ 未找到匹配元素（tag=${safeTag}${kw ? `, keyword=${kw}` : ''}）`;
+    }
+
+    const lines = items.map((it, i) => {
+      const head = `  [${i + 1}] <${it.tag}>${it.text ? ` text="${it.text}"` : ''}${it.href ? ` href="${it.href}"` : ''}`;
+      const html = (it.outerHTML || '').slice(0, 1200);
+      return `${head}\n${html}`;
+    });
+
+    return `🧩 匹配元素（共 ${items.length} 条）：\n${lines.join('\n\n')}`;
+  },
+};
+
 // ── 导出工具列表 ──────────────────────────────────────────────────
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -905,4 +1403,8 @@ export const browserTools: ToolDefinition<any>[] = [
   browserGetInputs,
   browserTypeRich,
   browserGetButtons,
+  browserFind,
+  browserGetState,
+  browserGetLinks,
+  browserGetElementsHtml,
 ];

@@ -33,6 +33,50 @@ export class ToolRegistry {
   }
 
   /**
+   * 获取排除指定工具名后的 schema 列表
+   * 用于 Agent Executor：排除 agent_start 防止递归触发新 Agent
+   */
+  getSchemasExcluding(names: string[]): ToolSchema[] {
+    return [...this.tools.values()]
+      .filter((t) => !names.includes(t.schema.function.name))
+      .map((t) => t.schema);
+  }
+
+  /**
+   * Skill 优先模式下的 schema 列表
+   *
+   * 当注册表中存在 isSkill=true 的工具时，使用"skill-first"模式：
+   *   - 所有 Skill（isSkill=true）永远暴露给 AI
+   *   - 底层原子工具中，excludeWhenSkills 列表内的工具会被隐藏（减少 AI 选择压力）
+   *   - excludeWhenSkills 未传则默认隐藏所有 sys_* 原子工具（因为它们由 Skill 内部调用）
+   *
+   * @param excludeWhenSkills 有 Skill 时要隐藏的原子工具名列表；
+   *                          传 [] 表示不隐藏任何工具；
+   *                          不传则自动隐藏 sys_* 前缀的工具
+   */
+  getSchemasForMode(excludeWhenSkills?: string[]): ToolSchema[] {
+    const all = [...this.tools.values()];
+    const hasSkills = all.some(t => t.isSkill);
+
+    if (!hasSkills) {
+      // 无 Skill 注册，全量暴露（与 getSchemas() 等价）
+      return all.map(t => t.schema);
+    }
+
+    // 有 Skill：按规则过滤原子工具
+    const toHide: Set<string> = new Set(
+      excludeWhenSkills === undefined
+        ? all.filter(t => !t.isSkill && t.schema.function.name.startsWith('sys_'))
+             .map(t => t.schema.function.name)
+        : excludeWhenSkills
+    );
+
+    return all
+      .filter(t => t.isSkill || !toHide.has(t.schema.function.name))
+      .map(t => t.schema);
+  }
+
+  /**
    * 执行指定工具
    *
    * @param name     - 工具函数名（来自 LLM 响应的 tool_call.function.name）
