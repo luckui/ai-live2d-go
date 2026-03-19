@@ -39,3 +39,14 @@ contextBridge.exposeInMainWorld('appLifecycleAPI', {
   onQuitReady: (cb: () => void) =>
     ipcRenderer.on('app:quit-ready', () => cb()),
 });
+
+/** AI 工具调用调试事件（开发调试用） */
+contextBridge.exposeInMainWorld('debugAPI', {
+  onToolCall: (cb: (ev: {
+    name: string;
+    args: Record<string, unknown>;
+    result: string;
+    ok: boolean;
+    durationMs: number;
+  }) => void) => ipcRenderer.on('tool-call-log', (_e, ev) => cb(ev)),
+});

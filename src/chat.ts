@@ -37,6 +37,15 @@ declare global {
       onQuitting(cb: () => void): void;
       onQuitReady(cb: () => void): void;
     };
+    debugAPI?: {
+      onToolCall(cb: (ev: {
+        name: string;
+        args: Record<string, unknown>;
+        result: string;
+        ok: boolean;
+        durationMs: number;
+      }) => void): void;
+    };
   }
 }
 
@@ -149,6 +158,56 @@ function addTypingIndicator(): HTMLElement | null {
 
   scrollToBottom();
   return typing;
+}
+
+// =====================================================
+// 工具调用调试气泡
+// =====================================================
+
+function addToolCallBubble(ev: {
+  name: string;
+  args: Record<string, unknown>;
+  result: string;
+  ok: boolean;
+  durationMs: number;
+}): void {
+  const messagesDiv = document.getElementById('messages');
+  if (!messagesDiv) return;
+
+  const icon   = ev.ok ? '✅' : ev.result.startsWith('⏸️') ? '⏸️' : '❌';
+  const status = ev.ok ? 'ok' : ev.result.startsWith('⏸️') ? 'pause' : 'err';
+
+  // 精简参数展示：只展示值，不要键名嵌套
+  let argsText = '';
+  try {
+    const vals = Object.values(ev.args);
+    argsText = vals.length ? vals.map(v => JSON.stringify(v)).join(', ') : '（无参数）';
+  } catch {
+    argsText = JSON.stringify(ev.args);
+  }
+
+  const bubble = document.createElement('div');
+  bubble.className = 'tool-call-bubble';
+  bubble.innerHTML = `
+    <details>
+      <summary>
+        <span class="tc-icon">${icon}</span>
+        <span class="tc-name">${escapeHtml(ev.name)}</span>
+        <span class="tc-args">${escapeHtml(argsText.slice(0, 60))}${argsText.length > 60 ? '…' : ''}</span>
+        <span class="tc-duration tc-${status}">${ev.durationMs}ms</span>
+      </summary>
+      <div class="tc-detail">
+        <div class="tc-row"><span class="tc-label">参数</span><span class="tc-val">${escapeHtml(JSON.stringify(ev.args, null, 2))}</span></div>
+        <div class="tc-row"><span class="tc-label">结果</span><span class="tc-val">${escapeHtml(ev.result)}</span></div>
+      </div>
+    </details>`;
+
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => bubble.classList.add('visible'));
+  });
+
+  messagesDiv.appendChild(bubble);
+  scrollToBottom();
 }
 
 // =====================================================
@@ -448,6 +507,9 @@ export async function initChat(): Promise<void> {
     if (title) (title as HTMLElement).textContent = '记忆已保存 ✓';
     if (hint)  (hint  as HTMLElement).textContent  = '再见，下次见到你要更厉害哦 ✨';
   });
+
+  // ── 工具调用调试气泡：实时展示 AI 正在调用哪些工具 ──────────
+  window.debugAPI?.onToolCall((ev) => addToolCallBubble(ev));
 }
 
 

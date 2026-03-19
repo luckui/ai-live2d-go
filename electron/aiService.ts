@@ -9,6 +9,48 @@ import { stripThinkTags } from './utils/textUtils';
 import { fetchCompletion } from './llmClient';
 import { runAgent } from './agent/orchestrator';
 
+// ── 工具调用调试事件 ─────────────────────────────────────
+/** 单次工具调用的调试记录（推送给渲染层展示） */
+export interface ToolCallEvent {
+  /** 工具名，如 browser_click_smart */
+  name: string;
+  /** 解析后的参数对象 */
+  args: Record<string, unknown>;
+  /** 执行结果文字（截取前 300 字） */
+  result: string;
+  /** true = ✅ 成功；false = ❌ 失败 / ⏸️ 暂停 */
+  ok: boolean;
+  /** 执行耗时（毫秒） */
+  durationMs: number;
+}
+
+let _toolEventListener: ((ev: ToolCallEvent) => void) | null = null;
+
+/** 由 main.ts 调用，注册工具调用调试事件回调（传 null 取消） */
+export function setToolEventListener(cb: ((ev: ToolCallEvent) => void) | null): void {
+  _toolEventListener = cb;
+}
+
+/** 内部：执行工具并同时发射调试事件 */
+async function execAndEmit(name: string, argsJson: string) {
+  const t0 = Date.now();
+  const result = await toolRegistry.execute(name, argsJson);
+  const durationMs = Date.now() - t0;
+  if (_toolEventListener) {
+    const resultText = isToolImageResult(result) ? result.text : String(result);
+    let parsedArgs: Record<string, unknown> = {};
+    try { parsedArgs = JSON.parse(argsJson); } catch { /* ignore */ }
+    _toolEventListener({
+      name,
+      args: parsedArgs,
+      result: resultText.slice(0, 300),
+      ok: !resultText.startsWith('❌') && !resultText.startsWith('[工具错误]'),
+      durationMs,
+    });
+  }
+  return result;
+}
+
 function getLatestRealUserText(messages: ChatMessage[]): string {
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i];
@@ -31,6 +73,17 @@ function isLikelyBrowseIntent(userText: string): boolean {
   const t = userText.toLowerCase();
   if (!t) return false;
   return /(打开|进入|访问|去|导航|网页|网站|页面|链接|网址|url|浏览器|搜索|查找|点击|查看|看看|点开|执行)/i.test(t);
+}
+
+/**
+ * 检测用户请求是否属于"需要调用工具才能完成"的动作类意图。
+ * 范围比 isLikelyBrowseIntent 更广：涵盖终端/截图/系统控制等。
+ * 用于第一轮无工具调用时的通用兜底纠偏。
+ */
+function isLikelyActionIntent(userText: string): boolean {
+  const t = userText.toLowerCase();
+  if (!t) return false;
+  return /(帮我|我要|请你|帮|打开|进入|访问|导航|搜索|点击|查看|看看|点开|执行|运行|截图|截屏|终端|cmd|powershell|命令|操作|控制|输入|填写|登录|登陆|提交|发布|发送|下载|上传|刷新|切换|关闭|退出|删除|复制|粘贴)/i.test(t);
 }
 
 function isLikelyToolFreeBrowserHallucination(replyText: string): boolean {
@@ -82,7 +135,25 @@ async function callWithToolLoop(
     // ── 无工具调用 → 返回最终文本 ──
     if (choice.finish_reason !== 'tool_calls' || !choice.message.tool_calls?.length) {
       const finalText = stripThinkTags(choice.message.content?.trim() ?? '');
-
+      // ── 第一轮无工具调用通用兜底 ──────────────────────────────────────
+      // reasoning 模型在新对话里容易「觉得自己能直接回答」而不调工具。
+      // 只要第一轮有动作类意图但没有调工具，注入强制纠偏让模型重新决策。
+      if (round === 0 && !antiHallucinationNudgeUsed && withTools) {
+        const latestUser = getLatestRealUserText(msgBuf);
+        if (isLikelyActionIntent(latestUser)) {
+          antiHallucinationNudgeUsed = true;
+          msgBuf.push({ role: 'assistant', content: choice.message.content ?? finalText });
+          msgBuf.push({
+            role: 'user',
+            content:
+              '【系统纠偏】你刚才没有调用任何工具就直接回复了，但用户的请求需要实际操作。' +
+              '你拥有工具调用能力（浏览器操作/打开终端/截图/系统控制等），' +
+              '必须调用对应工具后再回复，不能只用文字描述意图。' +
+              '请重新理解用户请求，直接调用工具。',
+          });
+          continue;
+        }
+      }
       // 防浏览器幻觉：用户要求访问/操作网站，但模型未调用工具却给出“已完成/进行中”口头回复。
       if (!antiHallucinationNudgeUsed && withTools && hasBrowserTools(toolSchemas)) {
         const latestUser = getLatestRealUserText(msgBuf);
@@ -137,7 +208,7 @@ async function callWithToolLoop(
     const execResults = await Promise.all(
       choice.message.tool_calls.map(async (tc) => ({
         tc,
-        result: await toolRegistry.execute(tc.function.name, tc.function.arguments),
+        result: await execAndEmit(tc.function.name, tc.function.arguments),
       }))
     );
 
@@ -163,11 +234,25 @@ async function callWithToolLoop(
         msgBuf.push({ role: 'tool', tool_call_id: tc.id, content: result });
       }
     }
-    // 每轮工具结果回填后注入简洁性提醒，抑制小模型在下一轮输出大段自言自语
-    msgBuf.push({
-      role: 'user',
-      content: '【系统】根据以上工具结果，直接执行下一步操作或给出最终回复。禁止输出推理过程。',
+    // 每轮工具结果回填后注入提示
+    // 若本轮有任意工具返回 🔄（Skill 继续），注入强制继续指令，否则注入通用提醒
+    const hasSkillContinue = execResults.some(({ result }) => {
+      const text = isToolImageResult(result) ? result.text : String(result);
+      return text.startsWith('🔄');
     });
+    if (hasSkillContinue) {
+      msgBuf.push({
+        role: 'user',
+        content:
+          '【系统强制】上面的工具返回了 🔄，表示 Skill 流程尚未完成，你必须立刻调用【必须立即执行】中指定的工具继续执行。' +
+          '禁止输出任何文字回复，禁止和用户聊天，直接调用工具。',
+      });
+    } else {
+      msgBuf.push({
+        role: 'user',
+        content: '【系统】根据以上工具结果，直接执行下一步操作或给出最终回复。禁止输出推理过程。',
+      });
+    }
     // 继续循环，带上工具结果再请求
   }
 

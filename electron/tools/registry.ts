@@ -1,4 +1,5 @@
-import type { ToolDefinition, ToolSchema, ToolExecuteResult } from './types';
+import type { ToolDefinition, ToolSchema, ToolExecuteResult, ToolImageResult } from './types';
+import { isSkillPauseResult, isSkillContinueResult } from './types';
 
 /**
  * 工具注册中心
@@ -72,7 +73,11 @@ export class ToolRegistry {
     );
 
     return all
-      .filter(t => t.isSkill || !toHide.has(t.schema.function.name))
+      .filter(t => {
+        if (t.isSkill) return true;                          // Skill 永远暴露
+        if (t.hideWhenSkills) return false;                  // 有 Skill 时隐藏
+        return !toHide.has(t.schema.function.name);          // sys_* 等按名单隐藏
+      })
       .map(t => t.schema);
   }
 
@@ -82,16 +87,44 @@ export class ToolRegistry {
    * @param name     - 工具函数名（来自 LLM 响应的 tool_call.function.name）
    * @param argsJson - JSON 字符串（来自 LLM 响应的 tool_call.function.arguments）
    * @returns        - 工具执行结果：字符串或含图像的 ToolImageResult
-   *                   调用方（aiService）负责将图像注入多模态 user 消息
+   *                   SkillPauseResult 已在此处格式化为带 ⏸️ 标记的字符串，
+   *                   调用方（aiService）无需感知暂停类型。
    */
-  async execute(name: string, argsJson: string): Promise<ToolExecuteResult> {
+  async execute(name: string, argsJson: string): Promise<string | ToolImageResult> {
     const tool = this.tools.get(name);
     if (!tool) {
       return `[工具错误] 未找到名为 "${name}" 的工具，已注册: ${[...this.tools.keys()].join(', ')}`;
     }
     try {
       const args = JSON.parse(argsJson) as Record<string, unknown>;
-      return await tool.execute(args);
+      const result = await tool.execute(args);
+
+      // ── Skill 暂停：格式化为带 ⏸️ 标记的字符串，AI 按 systemPrompt 规范处理 ──
+      if (isSkillPauseResult(result)) {
+        const traceLines = result.trace.length
+          ? result.trace.map(t => '  ' + t).join('\n')
+          : '  （无执行轨迹）';
+        return (
+          `⏸️ Skill 暂停等待用户操作\n` +
+          `执行轨迹：\n${traceLines}\n\n` +
+          `【当前状态】${result.userMessage}\n` +
+          `【用户完成后】${result.resumeHint}`
+        );
+      }
+
+      // ── Skill 继续：格式化为带 🔄 标记的字符串，aiService 检测后强制注入继续指令 ──
+      if (isSkillContinueResult(result)) {
+        const traceLines = result.trace.length
+          ? result.trace.map(t => '  ' + t).join('\n')
+          : '  （无执行轨迹）';
+        return (
+          `🔄 Skill 阶段完成，需要立即执行下一步\n` +
+          `执行轨迹：\n${traceLines}\n\n` +
+          `【必须立即执行】${result.instruction}`
+        );
+      }
+
+      return result;
     } catch (e) {
       return `[工具错误] "${name}" 执行失败: ${(e as Error).message}`;
     }

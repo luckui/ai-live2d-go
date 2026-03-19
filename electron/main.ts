@@ -18,11 +18,21 @@ import {
   getMemoryFragments,
   getGlobalMemoryCursor,
 } from './db';
-import { sendChatMessage } from './aiService';
+import { sendChatMessage, setToolEventListener } from './aiService';
 import { triggerConversationLeave, memoryManager, globalMemoryManager, runStartupCatchUp, startIdleScheduler } from './memory/index';
 import aiConfig from './ai.config';
+import { startBridges, stopBridges } from './bridges/index';
 
 // ── 实运行时加载持久化的 LLM 配置 ──────────────────────────────
+
+/**
+ * 用户可在 UI 修改的字段：apiKey / baseUrl / model / temperature / maxTokens / name
+ * 其余字段（systemPrompt / extraParams / thinkingBudgetTokens）属于开发者配置，
+ * 始终以 ai.config.ts 代码为准，不从数据库覆盖。
+ * 这样每次更新提示词后重启即可生效，不需要用户手动清空数据库。
+ */
+const USER_EDITABLE_FIELDS = ['apiKey', 'baseUrl', 'model', 'temperature', 'maxTokens', 'name'] as const;
+
 function loadPersistedConfig(): void {
   const stored = getSetting('llm_config');
   if (!stored) return;
@@ -37,15 +47,23 @@ function loadPersistedConfig(): void {
     aiConfig.deletedProviders = deletedProviders;
 
     if (saved.providers && Object.keys(saved.providers).length > 0) {
-      // 以 DB 保存的配置为基础（包含用户的所有修改）
-      const merged: typeof aiConfig.providers = { ...saved.providers };
-      // 将代码里新增的 provider 补入：只要 DB 里没有 且 用户没有主动删除过
-      for (const [key, prov] of Object.entries(aiConfig.providers)) {
-        if (!(key in merged) && !deletedProviders.includes(key)) {
-          merged[key] = prov;
+      for (const [key, codeProv] of Object.entries(aiConfig.providers)) {
+        const dbProv = saved.providers[key];
+        if (!dbProv) continue; // DB 里没有此 provider，保留代码默认值
+        // 只把用户可编辑字段从 DB 合并进来，开发者字段（systemPrompt 等）始终用代码版本
+        for (const field of USER_EDITABLE_FIELDS) {
+          if (dbProv[field] !== undefined) {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            (codeProv as any)[field] = dbProv[field];
+          }
         }
       }
-      aiConfig.providers = merged;
+      // 将 DB 里用户自行新增的 provider（代码里没有的）也加进来
+      for (const [key, dbProv] of Object.entries(saved.providers)) {
+        if (!(key in aiConfig.providers) && !deletedProviders.includes(key)) {
+          aiConfig.providers[key] = dbProv;
+        }
+      }
     }
   } catch {
     // 解析失败时保持默认配置
@@ -80,6 +98,14 @@ function createWindow(): void {
     }
   });
   mainWin = win;
+
+  // ── 工具调用调试事件：AI 每次调用工具时实时推送给渲染层 ──────
+  setToolEventListener((ev) => {
+    if (mainWin && !mainWin.isDestroyed() && !mainWin.webContents.isDestroyed()) {
+      mainWin.webContents.send('tool-call-log', ev);
+    }
+  });
+  win.on('closed', () => setToolEventListener(null));
 
   // ── 全屏光标追踪：每帧推送光标屏幕坐标给渲染层，用于 Live2D 目光追踪 ──
   const cursorInterval = setInterval(() => {
@@ -159,6 +185,15 @@ app.whenReady().then(() => {
   loadPersistedConfig();
   createWindow();
 
+  // ── 启动平台桥接（Discord 等）：使用首个对话 ID 作为默认绑定对话 ──
+  const existingConvs = listConversations();
+  const defaultConvId = existingConvs.length > 0
+    ? existingConvs[0].id
+    : createConversation().id;
+  startBridges(defaultConvId).catch((e) =>
+    console.error('[Bridges] 启动失败:', (e as Error).message)
+  );
+
   // ── 启动时批量追赶：延迟 3s 等 UI 稳定后处理所有遗留的未总结消息 ──
   setTimeout(() => {
     const ids = listConversations().map((c) => c.id);
@@ -203,16 +238,18 @@ app.on('before-quit', (event) => {
   })()
     .catch((e) => console.error('[Memory] 退出时流水线异常:', (e as Error).message))
     .finally(() => {
-      if (mainWin && !mainWin.isDestroyed() && !mainWin.webContents.isDestroyed()) {
-        // 通知渲染层流水线完成，短暂展示"已保存"后关闭
-        mainWin.webContents.send('app:quit-ready');
-        setTimeout(() => {
-          mainWin?.destroy(); // 直接 destroy 跳过 close 事件，防止重入
+      stopBridges().finally(() => {
+        if (mainWin && !mainWin.isDestroyed() && !mainWin.webContents.isDestroyed()) {
+          // 通知渲染层流水线完成，短暂展示"已保存"后关闭
+          mainWin.webContents.send('app:quit-ready');
+          setTimeout(() => {
+            mainWin?.destroy(); // 直接 destroy 跳过 close 事件，防止重入
+            app.quit();
+          }, 400);
+        } else {
           app.quit();
-        }, 400);
-      } else {
-        app.quit();
-      }
+        }
+      });
     });
 });
 

@@ -1,0 +1,96 @@
+/**
+ * 原子工具：run_command
+ *
+ * 通过 child_process.execFile / exec 执行任意命令行命令，
+ * 返回 stdout + stderr 合并输出（截取前 4000 字符）。
+ *
+ * 特性：
+ *   - 跨平台：Windows 走 cmd.exe /c，macOS/Linux 走 /bin/sh -c
+ *   - 超时保护（默认 15 秒）
+ *   - 非零退出码不抛出异常，而是在结果中注明
+ *   - 输出过长时截断，防止塞满 context
+ */
+
+import { exec } from 'child_process';
+import type { ToolDefinition } from '../types';
+
+interface RunCommandParams {
+  /** 要执行的命令（Shell 语法） */
+  command: string;
+  /** 超时毫秒，默认 15000 */
+  timeoutMs?: number;
+  /** 工作目录，默认继承当前进程 cwd */
+  cwd?: string;
+}
+
+const runCommandTool: ToolDefinition<RunCommandParams> = {
+  schema: {
+    type: 'function',
+    function: {
+      name: 'run_command',
+      description:
+        '在系统 Shell 中执行一条命令行命令，返回 stdout + stderr 合并输出。\n' +
+        '跨平台：Windows 用 cmd.exe /c 执行，macOS/Linux 用 /bin/sh -c 执行。\n' +
+        '非零退出码不报错，输出中会注明退出码。\n' +
+        '【适用场景】查询系统信息（python --version、conda env list、node -v 等）、\n' +
+        '执行脚本、读取命令行工具输出等。\n' +
+        '【注意】避免执行破坏性命令（rm -rf、format 等），该工具不做安全检查。',
+      parameters: {
+        type: 'object',
+        properties: {
+          command: {
+            type: 'string',
+            description: '要执行的 Shell 命令，例如："python --version"、"conda env list"、"node -v"',
+          },
+          timeoutMs: {
+            type: 'number',
+            description: '超时毫秒数，默认 15000（15 秒）。长耗时命令可适当调大。',
+          },
+          cwd: {
+            type: 'string',
+            description: '工作目录（绝对路径），默认使用进程当前目录。',
+          },
+        },
+        required: ['command'],
+      },
+    },
+  },
+
+  async execute({ command, timeoutMs = 15000, cwd }) {
+    return new Promise<string>((resolve) => {
+      const isWin = process.platform === 'win32';
+      const shell = isWin ? 'cmd.exe' : '/bin/sh';
+      const shellFlag = isWin ? '/c' : '-c';
+
+      exec(
+        command,
+        {
+          shell: `${shell} ${shellFlag}`.split(' ')[0],  // exec 的 shell 选项只接受路径
+          timeout: timeoutMs,
+          cwd: cwd ?? process.cwd(),
+          encoding: 'utf8',
+          maxBuffer: 1024 * 1024,  // 1MB 缓冲
+          windowsHide: true,
+        },
+        (err, stdout, stderr) => {
+          const out = (stdout ?? '').trim();
+          const errText = (stderr ?? '').trim();
+          const combined = [out, errText].filter(Boolean).join('\n');
+
+          if (err?.killed || err?.signal === 'SIGTERM') {
+            resolve(`⏱️ 命令超时（>${timeoutMs}ms）：${command}`);
+            return;
+          }
+
+          const exitCode = err?.code ?? 0;
+          const header = exitCode !== 0 ? `[退出码 ${exitCode}]\n` : '';
+          const output = (header + combined).slice(0, 4000);
+
+          resolve(output || '（命令执行完毕，无输出）');
+        },
+      );
+    });
+  },
+};
+
+export default runCommandTool;

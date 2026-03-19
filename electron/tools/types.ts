@@ -61,12 +61,87 @@ export interface ToolImageResult {
   mimeType: 'image/png' | 'image/jpeg' | 'image/webp';
 }
 
-/** 工具执行结果，字符串或图像结果 */
-export type ToolExecuteResult = string | ToolImageResult;
+/**
+ * Skill 暂停结果 —— 用于 Skill 在执行途中遇到需要用户/AI 介入的决策节点。
+ *
+ * Skill 执行逻辑检测到关键分支（如"邮箱未登录"、"找不到确认按钮"等）时，
+ * 返回此类型代替字符串，registry 会将其格式化为带 ⏸️ 标记的字符串回填给 AI。
+ *
+ * AI 收到 ⏸️ 后（配合 systemPrompt 中的规范）会：
+ *   1. 向用户说明当前情况（userMessage）
+ *   2. 等待用户完成操作
+ *   3. 按 resumeHint 的提示继续后续步骤
+ *
+ * @example
+ * ```ts
+ * // 在 Skill 中检测到未登录时：
+ * if (!isLoggedIn) {
+ *   return {
+ *     __pause: true as const,
+ *     trace: steps,
+ *     userMessage: '邮箱当前处于未登录状态，无法继续读取邮件。',
+ *     resumeHint:  '用户登录后，请重新调用 check_email() 继续任务。',
+ *   };
+ * }
+ * ```
+ */
+export interface SkillPauseResult {
+  /** 固定标识，registry 用此识别 Skill 暂停并格式化 */
+  readonly __pause: true;
+  /** 已执行步骤的轨迹（每项一行） */
+  trace: string[];
+  /** 向 AI（进而向用户）说明当前情况 */
+  userMessage: string;
+  /** 用户完成操作后，AI 应执行的下一步提示 */
+  resumeHint: string;
+}
+
+/**
+ * Skill 内部阶段完成后需要 AI 立即执行下一步（不涉及用户介入）。
+ *
+ * 与 SkillPauseResult 的区别：
+ *   SkillPauseResult  → 需要用户操作后才能继续（如手动登录、确认弹窗）
+ *   SkillContinueResult → Skill 内部流程未完成，AI 必须立刻调用下一步工具
+ *
+ * registry 会将其格式化为 🔄 前缀字符串；
+ * aiService 检测到 🔄 前缀后，注入强制继续指令而非通用「执行下一步或回复」提示。
+ *
+ * @example
+ * ```ts
+ * // Phase 1 扫描到候选列表，要求 AI 立即选 idx 调用 Phase 2：
+ * return {
+ *   __continue: true as const,
+ *   trace: steps,
+ *   instruction: `找到 ${candidates.length} 个候选，请立即从中选择 idx 并调用 Phase 2。`,
+ *   candidates: topN,   // 可选，结构化候选列表供 AI 参考
+ * };
+ * ```
+ */
+export interface SkillContinueResult {
+  /** 固定标识，registry 用此识别 Skill 继续并格式化 */
+  readonly __continue: true;
+  /** 已执行步骤的轨迹 */
+  trace: string[];
+  /** 告知 AI 当前状态以及必须立即执行的下一步，语气要求强制 */
+  instruction: string;
+}
+
+/** 类型守卫：判断工具结果是否为 Skill 继续（AI 立即执行下一步） */
+export function isSkillContinueResult(r: ToolExecuteResult): r is SkillContinueResult {
+  return typeof r === 'object' && '__continue' in r && (r as SkillContinueResult).__continue === true;
+}
+
+/** 工具执行结果：普通文本 / 含图像 / Skill 暂停 / Skill 继续 */
+export type ToolExecuteResult = string | ToolImageResult | SkillPauseResult | SkillContinueResult;
 
 /** 类型守卫：判断工具结果是否含图像 */
 export function isToolImageResult(r: ToolExecuteResult): r is ToolImageResult {
   return typeof r === 'object' && 'imageBase64' in r;
+}
+
+/** 类型守卫：判断工具结果是否为 Skill 暂停 */
+export function isSkillPauseResult(r: ToolExecuteResult): r is SkillPauseResult {
+  return typeof r === 'object' && '__pause' in r && (r as SkillPauseResult).__pause === true;
 }
 
 export interface ToolDefinition<TParams = Record<string, unknown>> {
@@ -80,10 +155,17 @@ export interface ToolDefinition<TParams = Record<string, unknown>> {
   execute: (params: TParams) => Promise<ToolExecuteResult> | ToolExecuteResult;
   /**
    * 标记此工具为高级 Skill（封装了多步原子操作的复合能力）。
-   * ToolRegistry.getSchemasForMode('skill-first') 时，若存在 Skill，
+   * ToolRegistry.getSchemasForMode() 时，若存在 Skill，
    * 会优先暴露 Skill 并收起部分冗余的底层原子工具，降低 AI 选择压力。
    */
   isSkill?: boolean;
+  /**
+   * 当注册表中存在至少一个 Skill 时，自动隐藏此工具。
+   * 适用于已被某个 Skill 内部封装、不应直接暴露给 AI 的底层原子工具。
+   * 例如：browser_click_smart 注册后，browser_click / browser_js_click / browser_get_buttons
+   * 应加此标记，避免 AI 在有 Skill 的情况下仍直接调用底层决策树工具。
+   */
+  hideWhenSkills?: boolean;
 }
 
 // ── OpenAI Chat Message 类型（工具调用感知）──────────────

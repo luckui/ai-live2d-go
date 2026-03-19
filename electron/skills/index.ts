@@ -15,12 +15,21 @@
 
 import type { ToolDefinition } from '../tools/types';
 import openTerminalSkill from './impl/openTerminal';
+import browserClickSmartSkill from './impl/browserClick';
+import browserTypeSmartSkill from './impl/browserType';
+import checkPythonEnvSkill from './impl/checkPythonEnv';
+import writeFileSkill from './impl/writeFile';
 
-// ── Skill 列表 ────────────────────────────────────────────────────
-// 在此添加新 Skill：
-export const skillList: ToolDefinition<never>[] = [
+// ── Skill 列表 ────────────────────────────────────────────────
+const skillList: ToolDefinition<never>[] = [
   openTerminalSkill as ToolDefinition<never>,
+  browserClickSmartSkill as ToolDefinition<never>,
+  browserTypeSmartSkill as ToolDefinition<never>,
+  checkPythonEnvSkill as ToolDefinition<never>,
+  writeFileSkill as ToolDefinition<never>,
   // 未来在这里添加更多 Skill，例如：
   // weatherQuerySkill as ToolDefinition<never>,
-  // postToBBSSkill    as ToolDefinition<never>,
+  // checkEmailSkill   as ToolDefinition<never>,
 ];
+
+export { skillList };

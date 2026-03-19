@@ -94,10 +94,12 @@ const browserOpen: ToolDefinition<OpenParams> = {
     function: {
       name: 'browser_open',
       description:
-        '打开浏览器并导航到指定网址或搜索关键词。' +
-        '如果参数是完整网址（以 http:// 或 https:// 开头），直接打开；' +
-        '若要进行浏览器级 Google 搜索，必须使用前缀 google:关键词（例如 google:playwright 教程）。' +
-        '【重要】在某网站内搜索内容请使用该网站搜索框（browser_find + browser_type），不要调用本工具做站内搜索。' +
+        '打开浏览器并导航到指定网址或搜索关键词。\n' +
+        '支持三种格式：\n' +
+        '  • 完整网址：https://bilibili.com（推荐，最可靠）\n' +
+        '  • 裸域名：bilibili.com、www.github.com（自动补 https://）\n' +
+        '  • Google 搜索：google:关键词（如 google:playwright 教程）\n' +
+        '【重要】在某网站内搜索内容请使用该网站搜索框（browser_type_smart），不要调用本工具做站内搜索。\n' +
         '不确定当前是否已在目标页时，先调用 browser_get_state 确认 URL，避免重复导航。',
       parameters: {
         type: 'object',
@@ -115,10 +117,14 @@ const browserOpen: ToolDefinition<OpenParams> = {
 
   async execute({ query }) {
     const q = query.trim();
-    const isUrl = /^https?:\/\//i.test(q);
+    const isFullUrl = /^https?:\/\//i.test(q);
     const googleMatch = q.match(/^google\s*:\s*(.+)$/i);
 
-    if (!isUrl && !googleMatch) {
+    // 裸域名自动补 https://（如 bilibili.com、www.github.com、sub.example.co.jp）
+    const bareDomainMatch = !isFullUrl && !googleMatch &&
+      /^([a-z0-9-]+\.)+[a-z]{2,}(\/.*)?$/i.test(q);
+
+    if (!isFullUrl && !googleMatch && !bareDomainMatch) {
       const current = await pageInfo();
       return (
         '⚠️ browser_open 已阻止本次操作：这看起来不是网址，也不是显式 Google 搜索。\n' +
@@ -128,9 +134,11 @@ const browserOpen: ToolDefinition<OpenParams> = {
       );
     }
 
-    const url = isUrl
+    const url = isFullUrl
       ? q
-      : `https://www.google.com/search?q=${encodeURIComponent(googleMatch?.[1] ?? '')}`;
+      : googleMatch
+        ? `https://www.google.com/search?q=${encodeURIComponent(googleMatch[1])}`
+        : `https://${q}`;   // 裸域名补协议头
 
     const page = await browserSession.ensurePage();
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
@@ -215,6 +223,7 @@ const browserWait: ToolDefinition<WaitParams> = {
 interface ClickParams { selector: string; force?: boolean }
 
 const browserClick: ToolDefinition<ClickParams> = {
+  hideWhenSkills: true,   // 由 browser_click_smart Skill 内部处理，有 Skill 时隐藏
   schema: {
     type: 'function',
     function: {
@@ -275,6 +284,7 @@ const browserClick: ToolDefinition<ClickParams> = {
 interface TypeParams { selector: string; text: string; submit?: boolean }
 
 const browserType: ToolDefinition<TypeParams> = {
+  hideWhenSkills: true,   // 由 browser_type_smart Skill 内部处理，有 Skill 时隐藏
   schema: {
     type: 'function',
     function: {
@@ -538,6 +548,7 @@ const browserSwitchTab: ToolDefinition<SwitchTabParams> = {
 interface JsClickParams { selector: string }
 
 const browserJsClick: ToolDefinition<JsClickParams> = {
+  hideWhenSkills: true,   // 由 browser_click_smart Skill 内部处理，有 Skill 时隐藏
   schema: {
     type: 'function',
     function: {
@@ -639,6 +650,7 @@ const browserJsClick: ToolDefinition<JsClickParams> = {
  * 避免因 selector 模糊而填错字段（如把密码写进用户名框）。
  */
 const browserGetInputs: ToolDefinition<Record<string, never>> = {
+  hideWhenSkills: true,   // 由 browser_type_smart Skill 内部扫描，有 Skill 时隐藏
   schema: {
     type: 'function',
     function: {
@@ -776,6 +788,7 @@ const browserGetInputs: ToolDefinition<Record<string, never>> = {
 interface TypeRichParams { selector: string; text: string; clear?: boolean }
 
 const browserTypeRich: ToolDefinition<TypeRichParams> = {
+  hideWhenSkills: true,   // 由 browser_type_smart Skill 内部处理，有 Skill 时隐藏
   schema: {
     type: 'function',
     function: {
@@ -852,6 +865,7 @@ const browserTypeRich: ToolDefinition<TypeRichParams> = {
  *                        →（仍失败）browser_js_click(CSS sel)
  */
 const browserGetButtons: ToolDefinition<Record<string, never>> = {
+  hideWhenSkills: true,   // 由 browser_click_smart Skill 内部处理，有 Skill 时隐藏
   schema: {
     type: 'function',
     function: {
@@ -999,17 +1013,16 @@ const browserFind: ToolDefinition<FindParams> = {
         '【统一元素查找】扫描当前页面可操作元素（button / <a>链接 / 输入框 input / textarea / select / 富文本）。' +
         '也会识别 div/span 伪按钮（cursor:pointer、role=button、tabindex、btn/button 类名等）。' +
         '支持多关键词匹配，自动给出下一步操作建议。\n' +
-        '无需区分目标是 button / a / 输入框，返回结果中"→ 操作"列直接告诉你用哪个工具：\n' +
-        '  • → browser_open("https://...")  ：<a>链接，直接导航无需点击\n' +
-        '  • → browser_click("text=...")    ：按钮/交互元素，标准点击\n' +
-        '  • → browser_type("selector", "...")：普通输入框\n' +
-        '  • → browser_type_rich("selector", "...")：富文本编辑器\n' +
+        '支持多关键词匹配，返回元素列表供你选择下一步工具。\n' +
+        '返回结果中"→ 操作"列是建议（根据元素类型推断）：\n' +
+        '  • → browser_open("https://...")           ：<a>链接，直接导航\n' +
+        '  • → browser_click_smart(text="...")       ：按钮/交互元素，用智能点击 Skill\n' +
+        '  • → browser_type_smart(description="...")：输入框，用智能输入 Skill\n' +
         '【用法】\n' +
-        '  不传 keyword/keywords → 列出页面所有可见可操作元素（最多60个）\n' +
+        '  不传 keyword/keywords → 列出页面所有可见可操作元素（最多150个）\n' +
         '  传 keyword            → 单关键词（也可写成"词1 词2"，会自动拆分）\n' +
-        '  传 keywords           → 多关键词数组（推荐）\n' +
-        '  matchMode=all         → 必须同时命中全部关键词（默认 any）\n' +
-        '【替代场景】任何需要"找到某个按钮或链接"的情况，用此工具代替分别调用 browser_get_buttons + browser_get_links。',
+        '  传 keywords           → 多关键词数组（推荐同时包含中英文同义词）\n' +
+        '  matchMode=all         → 必须同时命中全部关键词（默认 any）',
       parameters: {
         type: 'object',
         properties: {
@@ -1022,7 +1035,11 @@ const browserFind: ToolDefinition<FindParams> = {
             type: 'array',
             items: { type: 'string' },
             description:
-              '多关键词数组（推荐）。例如 ["搜索", "帖子", "输入"]。',
+              '多关键词数组（推荐）。\n' +
+              '【强烈建议】同时包含中英文同义词，提升命中率，例如：\n' +
+              '  ["搜索", "search", "查找"]  ["登录", "login", "sign in"]  ["发布", "submit", "提交"]\n' +
+              '过滤会检查元素的 文字/id/name/placeholder/href/class 任一字段，\n' +
+              '纯图标按钮（class 含关键词但无可见文字）也能被命中。',
           },
           matchMode: {
             type: 'string',
@@ -1105,9 +1122,10 @@ const browserFind: ToolDefinition<FindParams> = {
             if (inputType === 'hidden') return;
           }
 
-          // 关键词过滤：文字/id/name/placeholder/href 任一字段匹配
+          // 关键词过滤：文字/id/name/placeholder/href/class任一字段匹配
           if (tokens.length) {
-            const haystack = (text + ' ' + id + ' ' + name + ' ' + placeholder + ' ' + href).toLowerCase();
+            const classes = (el.className || '').toString();
+            const haystack = (text + ' ' + id + ' ' + name + ' ' + placeholder + ' ' + href + ' ' + classes).toLowerCase();
             const hitCount = tokens.filter(t => haystack.includes(t)).length;
             if (mode === 'all' && hitCount < tokens.length) return;
             if (mode === 'any' && hitCount === 0) return;
@@ -1152,7 +1170,7 @@ const browserFind: ToolDefinition<FindParams> = {
           results.push({ tag, text, id, name, placeholder, href, classes, type, cssSelector, pwSelector, action });
         });
 
-        return results.slice(0, 60);
+        return results.slice(0, 150);
       })()
     `);
 
