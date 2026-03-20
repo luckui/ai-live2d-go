@@ -19,6 +19,7 @@ import browserClickSmartSkill from './impl/browserClick';
 import browserTypeSmartSkill from './impl/browserType';
 import checkPythonEnvSkill from './impl/checkPythonEnv';
 import writeFileSkill from './impl/writeFile';
+import discordSendFileSkill from './impl/discordSendFile';
 
 // ── Skill 列表 ────────────────────────────────────────────────
 const skillList: ToolDefinition<never>[] = [
@@ -27,6 +28,7 @@ const skillList: ToolDefinition<never>[] = [
   browserTypeSmartSkill as ToolDefinition<never>,
   checkPythonEnvSkill as ToolDefinition<never>,
   writeFileSkill as ToolDefinition<never>,
+  discordSendFileSkill as ToolDefinition<never>,
   // 未来在这里添加更多 Skill，例如：
   // weatherQuerySkill as ToolDefinition<never>,
   // checkEmailSkill   as ToolDefinition<never>,
