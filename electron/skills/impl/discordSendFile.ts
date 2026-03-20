@@ -26,6 +26,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { desktopCapturer, nativeImage } from 'electron';
 import { AttachmentBuilder, TextChannel } from 'discord.js';
 import type { ToolDefinition, SkillPauseResult } from '../../tools/types';
 import { DiscordAdapter } from '../../bridges/adapters/discord';
@@ -45,6 +46,11 @@ interface DiscordSendFileParams {
   file_name?: string;
   /** 随文件一起发送的文字说明（可选） */
   message?: string;
+  /**
+   * 截取当前屏幕并发送（无需 file_path / file_name）。
+   * 用于"把我的桌面截图发给我"等场景。
+   */
+  screenshot?: boolean;
 }
 
 // 搜索的常用目录列表（按优先级排序）
@@ -98,6 +104,7 @@ const discordSendFileSkill: ToolDefinition<DiscordSendFileParams> = {
         '  • 已知完整路径 → 填 file_path（直接发送，不搜索）\n' +
         '  • 只知道文件名 → 填 file_name（Skill 自动在 Desktop/Downloads/Documents 搜索）\n' +
         '【channel_id】从消息标签"频道："字段直接取，不要猜测。\n' +
+        '【截图发送】用户要求发送桌面截图时，填 screenshot=true，无需 file_path/file_name。\n' +
         '【不要用的场景】无 Discord 标签的桌面聊天不要调用此 Skill。',
       parameters: {
         type: 'object',
@@ -118,13 +125,17 @@ const discordSendFileSkill: ToolDefinition<DiscordSendFileParams> = {
             type: 'string',
             description: '随附件一起发送的文字说明（可选）',
           },
+          screenshot: {
+            type: 'boolean',
+            description: '为 true 时截取当前屏幕并发送，无需 file_path/file_name。用于"发送桌面截图"场景。',
+          },
         },
         required: ['channel_id'],
       },
     },
   },
 
-  async execute({ channel_id, file_path, file_name, message }): Promise<string | SkillPauseResult> {
+  async execute({ channel_id, file_path, file_name, message, screenshot }): Promise<string | SkillPauseResult> {
     // ── 1. 守卫：Bot 必须在线 ────────────────────────────────────
     const client = DiscordAdapter.activeClient;
     if (!client) {
@@ -133,8 +144,30 @@ const discordSendFileSkill: ToolDefinition<DiscordSendFileParams> = {
 
     // ── 2. 确定最终文件路径 ──────────────────────────────────────
     let resolvedPath: string | null = null;
+    let isTempFile = false;   // 截图临时文件标记，发送后自动删除
 
-    if (file_path) {
+    if (screenshot) {
+      // 截图模式：截屏 → 写临时 PNG → 发送后删除
+      try {
+        const sources = await desktopCapturer.getSources({
+          types: ['screen'],
+          thumbnailSize: { width: 1920, height: 1080 },
+        });
+        if (sources.length === 0) return '❌ 未找到可用屏幕源，请检查系统截图权限。';
+        const primary =
+          sources.find(s => s.name === 'Entire Screen' || s.name === 'Screen 1') ?? sources[0];
+        let img = primary.thumbnail;
+        if (img.getSize().width > 1280) {
+          img = nativeImage.createFromBuffer(img.resize({ width: 1280 }).toPNG());
+        }
+        const tmpPath = path.join(os.tmpdir(), `screenshot_${Date.now()}.png`);
+        fs.writeFileSync(tmpPath, img.toPNG());
+        resolvedPath = tmpPath;
+        isTempFile = true;
+      } catch (e) {
+        return `❌ 截图失败：${(e as Error).message}`;
+      }
+    } else if (file_path) {
       // 直接路径模式
       const normalized = path.normalize(file_path);
       if (!fs.existsSync(normalized)) {
@@ -208,6 +241,14 @@ const discordSendFileSkill: ToolDefinition<DiscordSendFileParams> = {
       return `❌ 发送失败：${msg.slice(0, 300)}`;
     }
 
+    // 截图临时文件用完即删
+    if (isTempFile && resolvedPath) {
+      try { fs.unlinkSync(resolvedPath); } catch { /* ignore */ }
+    }
+
+    if (screenshot) {
+      return `✅ 已向频道 ${channel_id} 发送桌面截图${message ? `（备注：${message}）` : ''}`;
+    }
     return `✅ 已向频道 ${channel_id} 发送文件：${path.basename(resolvedPath)}（来自 ${resolvedPath}）`;
   },
 };

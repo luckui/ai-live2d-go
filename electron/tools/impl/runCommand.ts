@@ -34,7 +34,9 @@ const runCommandTool: ToolDefinition<RunCommandParams> = {
         '非零退出码不报错，输出中会注明退出码。\n' +
         '【适用场景】查询系统信息（python --version、conda env list、node -v 等）、\n' +
         '执行脚本、读取命令行工具输出等。\n' +
-        '【注意】避免执行破坏性命令（rm -rf、format 等），该工具不做安全检查。',
+        '【注意】避免执行破坏性命令（rm -rf、format 等），该工具不做安全检查。\n' +
+        '【提示】不确定命令写法时，先调用 read_manual(topic="命令行操作") 查阅规范，\n' +
+        '        或调用 read_manual() 列出全部说明书主题。',
       parameters: {
         type: 'object',
         properties: {
@@ -60,12 +62,15 @@ const runCommandTool: ToolDefinition<RunCommandParams> = {
     return new Promise<string>((resolve) => {
       const isWin = process.platform === 'win32';
       const shell = isWin ? 'cmd.exe' : '/bin/sh';
-      const shellFlag = isWin ? '/c' : '-c';
+
+      // Windows：在命令前加 chcp 65001 切换到 UTF-8，避免中文输出乱码
+      // > nul 屏蔽 "Active code page: 65001" 这行提示
+      const actualCommand = isWin ? `chcp 65001 > nul && ${command}` : command;
 
       exec(
-        command,
+        actualCommand,
         {
-          shell: `${shell} ${shellFlag}`.split(' ')[0],  // exec 的 shell 选项只接受路径
+          shell,
           timeout: timeoutMs,
           cwd: cwd ?? process.cwd(),
           encoding: 'utf8',
@@ -83,10 +88,28 @@ const runCommandTool: ToolDefinition<RunCommandParams> = {
           }
 
           const exitCode = err?.code ?? 0;
-          const header = exitCode !== 0 ? `[退出码 ${exitCode}]\n` : '';
-          const output = (header + combined).slice(0, 4000);
 
-          resolve(output || '（命令执行完毕，无输出）');
+          if (exitCode !== 0) {
+            // 非零退出码：用 ❌ 开头，让 AI 明确知道命令失败，需要查阅说明书后重试
+            const output = `❌ 命令执行失败（退出码 ${exitCode}）\n命令：${command}\n输出：\n${combined || '（无输出）'}`.slice(0, 4000);
+            resolve(output + '\n\n【操作指引】命令失败，请立即调用 read_manual 查阅正确写法后重试，不要向用户解释错误。');
+            return;
+          }
+
+          const output = combined
+            ? combined.slice(0, 4000)
+            : '（退出码 0，命令正常完成，但没有产生任何输出。' +
+              '对于 Get-ChildItem / dir / find 等查找命令，无输出即代表没有找到任何匹配项，结果是确定的"未找到"，不是不确定。）';
+
+          // 乱码检测：U+FFFD 替换字符（GBK 字节被 UTF-8 解析失败时产生）
+          // 阈值 3 个以上视为乱码（单个偶发不算）
+          const garbageCount = (output.match(/\uFFFD/g) ?? []).length;
+          const garbageHint = garbageCount >= 3
+            ? '\n\n⚠️【编码警告】输出含乱码字符（可能是 GBK 命令输出未正确转 UTF-8）。' +
+              '如需理解输出内容，请调用 read_manual(topic="命令行操作") 查阅无乱码的替代命令（如改用 powershell -Command "Get-CimInstance ..."）。'
+            : '';
+
+          resolve(`✅ ${output}${garbageHint}`);
         },
       );
     });

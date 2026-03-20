@@ -41,12 +41,12 @@ const execFileAsync = promisify(execFile);
  * 打包后：electron-builder 把 public/ 复制到 resources/public/
  *   → path.join(process.resourcesPath, 'public', 'scripts', 'ocr_winrt.ps1')
  *
- * 开发时（electron-vite dev）：__dirname = out/main/，往上三级到项目根
- *   → path.join(__dirname, '..', '..', '..', 'public', 'scripts', 'ocr_winrt.ps1')
+ * 开发时（electron-vite dev）：__dirname = out/main/，往上两级到项目根
+ *   → path.join(__dirname, '..', '..', 'public', 'scripts', 'ocr_winrt.ps1')
  */
 const PS_SCRIPT = app.isPackaged
   ? path.join(process.resourcesPath, 'public', 'scripts', 'ocr_winrt.ps1')
-  : path.join(__dirname, '..', '..', '..', 'public', 'scripts', 'ocr_winrt.ps1');
+  : path.join(__dirname, '..', '..', 'public', 'scripts', 'ocr_winrt.ps1');
 
 // 临时截图路径（每次覆盖写，不累积）
 const TMP_IMG = path.join(os.tmpdir(), 'live2d_pet_ocr.png');

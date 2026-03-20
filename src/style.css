@@ -528,6 +528,15 @@ html, body {
   border-radius: var(--radius-md);
   position: relative;
   word-break: break-word;
+  -webkit-user-select: text;
+  user-select: text;
+  cursor: text;
+}
+
+.message-bubble,
+.message-bubble * {
+  -webkit-user-select: text;
+  user-select: text;
 }
 
 .ai-message .message-bubble {
@@ -645,7 +654,7 @@ html, body {
   gap: 4px;
 }
 .tc-row    { display: flex; gap: 6px; align-items: flex-start; }
-.tc-label  { color: #aaa; flex-shrink: 0; min-width: 28px; }
+.tc-label  { color: #aaa; flex-shrink: 0; min-width: 28px; -webkit-user-select: text; user-select: text; }
 .tc-val    {
   color: #445;
   font-family: monospace;
@@ -654,6 +663,9 @@ html, body {
   word-break: break-all;
   max-height: 120px;
   overflow-y: auto;
+  -webkit-user-select: text;
+  user-select: text;
+  cursor: text;
 }
 
 /* ===== 输入区域 ===== */

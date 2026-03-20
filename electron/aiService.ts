@@ -8,6 +8,7 @@ import { memoryManager, globalMemoryManager, recordMessageActivity } from './mem
 import { stripThinkTags } from './utils/textUtils';
 import { fetchCompletion } from './llmClient';
 import { runAgent } from './agent/orchestrator';
+import { getManualTopicsForPrompt } from './tools/impl/manual';
 
 // ── 工具调用调试事件 ─────────────────────────────────────
 /** 单次工具调用的调试记录（推送给渲染层展示） */
@@ -84,6 +85,16 @@ function isLikelyActionIntent(userText: string): boolean {
   const t = userText.toLowerCase();
   if (!t) return false;
   return /(帮我|我要|请你|帮|打开|进入|访问|导航|搜索|点击|查看|看看|点开|执行|运行|截图|截屏|终端|cmd|powershell|命令|操作|控制|输入|填写|登录|登陆|提交|发布|发送|下载|上传|刷新|切换|关闭|退出|删除|复制|粘贴)/i.test(t);
+}
+
+/**
+ * 轻量任务意图检测：用户消息含"请/帮/查/找/看/给/写/改/删/开"等请求性字眼时触发。
+ * 用于在第一轮请求前预注入提示，提醒 AI 主动判断是否需要调用工具。
+ */
+function isLikelyTaskRequest(userText: string): boolean {
+  // 排除纯聊天性短句（问候、感谢、是否确认等）
+  if (/^(好的|嗯|谢谢|谢|ok|好|是的|对|不了|没事|算了|随便)[\s。！？]*$/i.test(userText.trim())) return false;
+  return /(请|帮|查|找|看|给|写|改|删|开|关|装|跑|执行|运行|搜|列|显示|告诉我|能不能|可以吗|帮我|帮忙|需要你)/i.test(userText);
 }
 
 function isLikelyToolFreeBrowserHallucination(replyText: string): boolean {
@@ -240,12 +251,28 @@ async function callWithToolLoop(
       const text = isToolImageResult(result) ? result.text : String(result);
       return text.startsWith('🔄');
     });
+
+    // run_command 失败：注入专用纠偏，禁止 AI 解释错误原因，强制查说明书
+    const hasCommandFailure = execResults.some(({ tc, result }) => {
+      if (tc.function.name !== 'run_command') return false;
+      const text = isToolImageResult(result) ? result.text : String(result);
+      return text.startsWith('❌');
+    });
+
     if (hasSkillContinue) {
       msgBuf.push({
         role: 'user',
         content:
           '【系统强制】上面的工具返回了 🔄，表示 Skill 流程尚未完成，你必须立刻调用【必须立即执行】中指定的工具继续执行。' +
           '禁止输出任何文字回复，禁止和用户聊天，直接调用工具。',
+      });
+    } else if (hasCommandFailure) {
+      msgBuf.push({
+        role: 'user',
+        content:
+          '【系统纠偏】run_command 执行失败（见上方 ❌ 输出）。' +
+          '必须立即调用 read_manual 查阅正确命令写法，然后用修正后的命令重试。' +
+          '若说明书中没有相关内容，再考虑其他方案。',
       });
     } else {
       msgBuf.push({
@@ -297,12 +324,23 @@ export async function sendChatMessage(
   const memoryAppend =
     memoryManager.buildMemoryAppend(conversationId) +
     globalMemoryManager.buildGlobalMemoryAppend();
-  const systemContent = (provider.systemPrompt ?? '') + memoryAppend;
+  // 动态注入说明书目录（每次对话初始化时刷新，新增/删除文件立即生效）
+  const manualTopics = getManualTopicsForPrompt();
+  const systemContent = (provider.systemPrompt ?? '') + manualTopics + memoryAppend;
 
   const messages: ChatMessage[] = [
     ...(systemContent ? [{ role: 'system' as const, content: systemContent }] : []),
     ...context.map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content })),
   ];
+
+  // 任务意图预提示：用户消息含请求性字眼时，在第一轮前轻量注入，
+  // 提醒 AI 主动判断是否需要调用工具，减少"口头描述代替实际执行"的幻觉。
+  if (toolRegistry.isEmpty === false && isLikelyTaskRequest(userContent)) {
+    messages.push({
+      role: 'user',
+      content: '【系统提示】检测到用户可能在请求执行一项任务。请先判断：这是需要调用工具才能完成的操作，还是普通聊天？如果需要工具，直接调用，不要只用文字描述你打算做什么。',
+    });
+  }
 
   // 3. 调用 AI（含工具调用循环）
   let replyContent: string;

@@ -4,11 +4,11 @@
   "description": "Live2D Desktop Pet with Chat UI - Hiyori",
   "main": "out/main/index.js",
   "scripts": {
-    "dev": "electron-vite dev",
-    "build": "electron-vite build",
+    "dev": "chcp 65001 > nul && electron-vite dev",
+    "build": "chcp 65001 > nul && electron-vite build",
     "preview": "electron-vite preview",
     "start": "electron-vite preview",
-    "pack:win": "electron-vite build && electron-builder --win --x64"
+    "pack:win": "chcp 65001 > nul && electron-vite build && electron-builder --win --x64"
   },
   "build": {
     "appId": "com.hiyori.desktop-pet",

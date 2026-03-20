@@ -84,22 +84,255 @@ async function pageInfo(): Promise<string> {
   return `"${title}"${tabTag} | ${page.url()}`;
 }
 
+/** 在当前页面中尝试定位“站内搜索框”，返回推荐 CSS selector */
+async function detectSiteSearchSelector(): Promise<string | null> {
+  const page = browserSession.currentPage;
+  if (!page) return null;
+
+  const selector: string | null = await page.evaluate(() => {
+    const g: any = globalThis as any;
+    const doc: any = g.document;
+    const getComputedStyle: ((el: any) => any) | undefined = g.getComputedStyle?.bind(g);
+    if (!doc || !getComputedStyle) return null;
+
+    const KEYWORDS = ['search', '搜索', '查找', 'query', 'keyword', '关键词'];
+
+    const isVisible = (el: any) => {
+      const rect = el.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return false;
+      const st = getComputedStyle(el);
+      return st.display !== 'none' && st.visibility !== 'hidden' && st.opacity !== '0';
+    };
+
+    const esc = (s: string) => {
+      const css = (g as { CSS?: { escape?: (v: string) => string } }).CSS;
+      if (css?.escape) return css.escape(s);
+      return s.replace(/"/g, '\\"');
+    };
+
+    const candidates: any[] = Array.from(doc.querySelectorAll(
+      'input:not([type="hidden"]):not([disabled]), textarea:not([disabled]), [contenteditable="true"]'
+    ) as any);
+
+    let best: { score: number; selector: string | null } = { score: -1, selector: null };
+
+    for (const el of candidates) {
+      if (!isVisible(el)) continue;
+
+      const tag = (el.tagName || '').toLowerCase();
+      const type = ((el.getAttribute('type') || '') + '').toLowerCase();
+      const id = (el.id || '').trim();
+      const name = (el.getAttribute('name') || '').trim();
+      const placeholder = (el.getAttribute('placeholder') || '').trim();
+      const aria = (el.getAttribute('aria-label') || '').trim();
+      const cls = ((el.className || '') + '').trim();
+      const role = (el.getAttribute('role') || '').trim();
+
+      const haystack = [id, name, placeholder, aria, cls, role, type].join(' ').toLowerCase();
+      let score = 0;
+
+      if (type === 'search') score += 60;
+      if (tag === 'input' || tag === 'textarea') score += 10;
+      if (role === 'searchbox' || role === 'textbox') score += 12;
+      const nameLower = name.toLowerCase();
+      if (nameLower === 'q' || nameLower === 's') score += 10;
+
+      for (const kw of KEYWORDS) {
+        if (haystack.includes(kw)) score += 20;
+      }
+
+      if (['password', 'email', 'tel', 'number'].includes(type)) score -= 40;
+
+      let candSelector: string | null = null;
+      if (id) candSelector = '#' + esc(id);
+      else if (name) candSelector = `${tag}[name="${esc(name)}"]`;
+      else if (placeholder) candSelector = `${tag}[placeholder="${esc(placeholder)}"]`;
+      else if (aria) candSelector = `${tag}[aria-label="${esc(aria)}"]`;
+
+      if (!candSelector) continue;
+      if (score > best.score) best = { score, selector: candSelector };
+    }
+
+    return best.score >= 30 ? best.selector : null;
+  });
+
+  return selector;
+}
+
+/** 根据 URL 推断当前页面类型（在 Node.js 进程中执行，不依赖 page.evaluate） */
+function inferPageType(url: string): string {
+  try {
+    const u = new URL(url);
+    const path = u.pathname.toLowerCase();
+    const search = u.search;
+    if (/[?&](q|wd|search|keyword|kw|query|s|text)=/i.test(search)) return '搜索结果页';
+    if (/\/(search|find|results?)\b/i.test(path)) return '搜索结果页';
+    if (/\/(wiki|item|entry|article|post|detail|news)\//i.test(path)) return '内容详情页';
+    if (/\/(list|category|tag|archive|topics?)\//i.test(path)) return '列表页';
+    if (/\/(user|profile|account|member|space)\//i.test(path)) return '个人主页';
+    if (/\/(login|signin|register|signup)/i.test(path)) return '登录/注册页';
+    if (path === '/' || path === '') return '网站首页';
+  } catch { /* ignore invalid URL */ }
+  return '普通页面';
+}
+
+/**
+ * 提取当前页面摘要，供 Skill 内联使用和 browser_read_page 工具调用。
+ *
+ * brief: 标题 + URL + 页面类型 + H1~H3大纲 + 主内容区链接前5条（nav/header/footer已过滤）
+ * full:  brief（链接前15条）+ 正文摘要 + 可交互元素（含操作提示）
+ *
+ * 改进点：
+ *   #1/#6  加入 H1~H3 标题大纲，帮助 AI 理解页面层级结构
+ *   #3     交互元素附带 browser_click_smart / browser_type_smart 操作提示
+ *   #4     链接优先返回主内容区（main/article），过滤 nav/header/footer 导航链接
+ */
+export async function readPageSummary(mode: 'brief' | 'full' = 'brief'): Promise<string> {
+  const page = browserSession.currentPage;
+  if (!page) return '（浏览器未打开）';
+
+  const url = page.url();
+  const title = await page.title().catch(() => '（无标题）');
+  const pageType = inferPageType(url);
+  const linkLimit = mode === 'brief' ? 5 : 15;
+
+  // ── 链接：主内容区优先，过滤 nav/header/footer ─────────────────
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const links: Array<{ text: string; href: string }> = await (page.evaluate as any)(
+    '(() => {' +
+    '  function inNavArea(el) {' +
+    '    var p = el.parentElement;' +
+    '    while (p) {' +
+    '      var t = p.tagName ? p.tagName.toLowerCase() : "";' +
+    '      var r2 = (p.getAttribute("role") || "").toLowerCase();' +
+    '      if (t === "nav" || t === "header" || t === "footer" || r2 === "navigation" || r2 === "banner") return true;' +
+    '      p = p.parentElement;' +
+    '    }' +
+    '    return false;' +
+    '  }' +
+    '  var main = document.querySelector("main,article,[role=main],#content,.content,#main");' +
+    '  var allLinks = Array.from(document.querySelectorAll("a[href]"));' +
+    '  var mainLinks = main ? allLinks.filter(function(el){ return main.contains(el); }) : [];' +
+    '  var otherLinks = allLinks.filter(function(el){ return !inNavArea(el) && !(main && main.contains(el)); });' +
+    '  var ordered = mainLinks.concat(otherLinks);' +
+    '  var res = []; var seen = new Set();' +
+    '  ordered.forEach(function(el) {' +
+    '    var href = el.href || "";' +
+    '    if (!href || href.startsWith("javascript:") || href === "#") return;' +
+    '    var r = el.getBoundingClientRect();' +
+    '    if (r.width === 0 && r.height === 0) return;' +
+    '    var st = window.getComputedStyle(el);' +
+    '    if (st.display === "none" || st.visibility === "hidden") return;' +
+    '    var text = (el.innerText || el.getAttribute("title") || el.getAttribute("aria-label") || "")' +
+    '      .trim().replace(/\\s+/g, " ").slice(0, 60);' +
+    '    if (!text || seen.has(href)) return;' +
+    '    seen.add(href); res.push({ text: text, href: href });' +
+    '  });' +
+    '  return res.slice(0, ' + linkLimit + ');' +
+    '})()'
+  ).catch(() => []);
+
+  // ── H1~H3 标题大纲 ────────────────────────────────────────────
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const headings: Array<{ level: number; text: string }> = await (page.evaluate as any)(
+    '(() => {' +
+    '  var res = [];' +
+    '  document.querySelectorAll("h1,h2,h3").forEach(function(el) {' +
+    '    var r = el.getBoundingClientRect();' +
+    '    if (r.width === 0 && r.height === 0) return;' +
+    '    var st = window.getComputedStyle(el);' +
+    '    if (st.display === "none" || st.visibility === "hidden") return;' +
+    '    var level = parseInt(el.tagName.slice(1), 10);' +
+    '    var text = (el.innerText || el.textContent || "").trim().replace(/\\s+/g, " ").slice(0, 80);' +
+    '    if (text) res.push({ level: level, text: text });' +
+    '  });' +
+    '  return res.slice(0, 10);' +
+    '})()'
+  ).catch(() => []);
+
+  let out = `【页面状态】\n标题: ${title}\nURL: ${url}\n页面类型: ${pageType}`;
+
+  if (headings.length > 0) {
+    const hl = headings.map((h: { level: number; text: string }) => {
+      const indent = '  '.repeat(h.level - 1);
+      return `${indent}H${h.level}: ${h.text}`;
+    }).join('\n');
+    out += `\n\n【页面大纲（H1~H3）】\n${hl}`;
+  }
+
+  if (links.length > 0) {
+    const ll = links.map((l: { text: string; href: string }, i: number) =>
+      `  ${i + 1}. ${l.text}  →  ${l.href}`
+    ).join('\n');
+    out += `\n\n【主内容链接（前${links.length}条，导航栏已过滤）】\n${ll}`;
+  }
+
+  if (mode === 'full') {
+    // ── 正文摘要（剔除 nav/header/footer/aside/form/script/style）──
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const bodyText: string = await (page.evaluate as any)(
+      '(() => {' +
+      '  var m = document.querySelector("main,article,[role=main],#content,.content,#main") || document.body;' +
+      '  if (!m) return "";' +
+      '  var c = m.cloneNode(true);' +
+      '  c.querySelectorAll("script,style,nav,footer,header,aside,form").forEach(function(e){e.remove();});' +
+      '  return (c.innerText || c.textContent || "").replace(/\\s+/g, " ").trim().slice(0, 800);' +
+      '})()'
+    ).catch(() => '');
+
+    if (bodyText) out += `\n\n【正文摘要】\n${bodyText}`;
+
+    // ── 可交互元素（含操作提示，AI 可直接复制参数调用）───────────
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const interactives: string = await (page.evaluate as any)(
+      '(() => {' +
+      '  var lines = [];' +
+      '  document.querySelectorAll("input:not([type=hidden]):not([disabled]),textarea:not([disabled])").forEach(function(el) {' +
+      '    var r = el.getBoundingClientRect();' +
+      '    if (r.width === 0 && r.height === 0) return;' +
+      '    var st = window.getComputedStyle(el);' +
+      '    if (st.display === "none" || st.visibility === "hidden") return;' +
+      '    var ph = el.getAttribute("placeholder") || "";' +
+      '    var lbl = el.getAttribute("aria-label") || el.getAttribute("title") || "";' +
+      '    var desc = (ph || lbl || el.getAttribute("type") || "text").slice(0, 40);' +
+      '    lines.push("  输入框: \\"" + desc + "\\" → browser_type_smart(description=\\"" + desc + "\\", value=\\"..\\")");' +
+      '  });' +
+      '  document.querySelectorAll("button:not([disabled]),[role=button],input[type=submit],input[type=button]").forEach(function(el) {' +
+      '    var r = el.getBoundingClientRect();' +
+      '    if (r.width === 0 && r.height === 0) return;' +
+      '    var st = window.getComputedStyle(el);' +
+      '    if (st.display === "none" || st.visibility === "hidden") return;' +
+      '    var text = (el.innerText || el.value || el.getAttribute("aria-label") || "").trim().slice(0, 40);' +
+      '    if (text) lines.push("  按钮: \\"" + text + "\\" → browser_click_smart(text=\\"" + text + "\\")");' +
+      '  });' +
+      '  return lines.slice(0, 20).join("\\n");' +
+      '})()'
+    ).catch(() => '');
+
+    if (interactives) out += `\n\n【可交互元素（含操作提示）】\n${interactives}`;
+  }
+
+  return out;
+}
+
 // ── 1. browser_open ───────────────────────────────────────────────
 
 interface OpenParams { query: string }
 
 const browserOpen: ToolDefinition<OpenParams> = {
+  hideWhenSkills: true,   // 由 browser_open Skill 替代（注册后覆盖），有 Skill 时隐藏
   schema: {
     type: 'function',
     function: {
       name: 'browser_open',
       description:
-        '打开浏览器并导航到指定网址或搜索关键词。\n' +
+        '打开浏览器并导航到目标地址（导航工具）。\n' +
         '支持三种格式：\n' +
         '  • 完整网址：https://bilibili.com（推荐，最可靠）\n' +
         '  • 裸域名：bilibili.com、www.github.com（自动补 https://）\n' +
         '  • Google 搜索：google:关键词（如 google:playwright 教程）\n' +
-        '【重要】在某网站内搜索内容请使用该网站搜索框（browser_type_smart），不要调用本工具做站内搜索。\n' +
+        '【重要】本工具不负责站内搜索；如需搜索请优先使用 browser_search。\n' +
+        '当浏览器尚未打开且你传入普通关键词时，本工具会自动按全网搜索处理。\n' +
         '不确定当前是否已在目标页时，先调用 browser_get_state 确认 URL，避免重复导航。',
       parameters: {
         type: 'object',
@@ -124,12 +357,15 @@ const browserOpen: ToolDefinition<OpenParams> = {
     const bareDomainMatch = !isFullUrl && !googleMatch &&
       /^([a-z0-9-]+\.)+[a-z]{2,}(\/.*)?$/i.test(q);
 
-    if (!isFullUrl && !googleMatch && !bareDomainMatch) {
+    const isPlainKeyword = !isFullUrl && !googleMatch && !bareDomainMatch;
+    const hasCurrentPage = !!browserSession.currentPage;
+
+    // 有当前页面时，普通关键词大概率是“站内搜索”意图：拦截并引导 browser_search
+    if (isPlainKeyword && hasCurrentPage) {
       const current = await pageInfo();
       return (
-        '⚠️ browser_open 已阻止本次操作：这看起来不是网址，也不是显式 Google 搜索。\n' +
-        '若你要在当前网站内搜索，请改用该站点搜索框（browser_find 定位搜索框 + browser_type 输入）。\n' +
-        '若你确实要全网搜索，请使用格式：google:关键词。\n' +
+        '⚠️ browser_open 已阻止本次操作：检测到普通关键词，当前存在页面，可能是站内搜索意图。\n' +
+        '请改用 browser_search(query="关键词", scope="auto")；若明确要全网搜索，使用 scope="web" 或 google:关键词。\n' +
         `当前页面：${current}`
       );
     }
@@ -138,11 +374,180 @@ const browserOpen: ToolDefinition<OpenParams> = {
       ? q
       : googleMatch
         ? `https://www.google.com/search?q=${encodeURIComponent(googleMatch[1])}`
-        : `https://${q}`;   // 裸域名补协议头
+        : bareDomainMatch
+          ? `https://${q}`   // 裸域名补协议头
+          : `https://www.google.com/search?q=${encodeURIComponent(q)}`; // 浏览器未打开时，普通关键词按全网搜索处理
 
     const page = await browserSession.ensurePage();
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
     return `✅ 已打开 ${await pageInfo()}`;
+  },
+};
+
+// ── 1.5 browser_search ───────────────────────────────────────────
+
+interface SearchParams {
+  query: string;
+  scope?: 'auto' | 'site' | 'web';
+}
+
+const browserSearch: ToolDefinition<SearchParams> = {
+  schema: {
+    type: 'function',
+    function: {
+      name: 'browser_search',
+      description:
+        '执行搜索意图（而非纯导航）。\n' +
+        'scope=auto（默认）：优先站内搜索，找不到站内搜索框时自动回退到全网搜索。\n' +
+        'scope=site：仅站内搜索；scope=web：仅全网搜索。\n' +
+        '当用户说“搜一下xxx/查xxx”时优先使用本工具。',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: {
+            type: 'string',
+            description: '要搜索的关键词（例如：黑神话 评测）',
+          },
+          scope: {
+            type: 'string',
+            enum: ['auto', 'site', 'web'],
+            description: '搜索范围：auto=优先站内失败回退全网，site=仅站内，web=仅全网。默认 auto。',
+          },
+        },
+        required: ['query'],
+      },
+    },
+  },
+
+  async execute({ query, scope = 'auto' }) {
+    const q = query.trim();
+    if (!q) return '❌ 关键词不能为空';
+
+    // 显式 URL 或 google: 前缀，直接按导航处理
+    const isFullUrl = /^https?:\/\//i.test(q);
+    const googleMatch = q.match(/^google\s*:\s*(.+)$/i);
+    const bareDomainMatch = !isFullUrl && !googleMatch &&
+      /^([a-z0-9-]+\.)+[a-z]{2,}(\/.*)?$/i.test(q);
+
+    if (isFullUrl || bareDomainMatch || googleMatch) {
+      const url = isFullUrl
+        ? q
+        : googleMatch
+          ? `https://www.google.com/search?q=${encodeURIComponent(googleMatch[1])}`
+          : `https://${q}`;
+      const page = await browserSession.ensurePage();
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+      await waitSettle();
+      const summary = await readPageSummary('brief');
+      return `✅ 检测到导航格式，已打开\n\n${summary}`;
+    }
+
+    const goWeb = async (reason?: string) => {
+      const page = await browserSession.ensurePage();
+      const url = `https://www.google.com/search?q=${encodeURIComponent(q)}`;
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+      await waitSettle();
+      const prefix = reason ? `✅ 已执行全网搜索（${reason}）` : `✅ 已执行全网搜索`;
+      const summary = await readPageSummary('brief');
+      return `${prefix}\n\n${summary}`;
+    };
+
+    if (scope === 'web') {
+      return goWeb();
+    }
+
+    // site / auto：尝试站内搜索
+    if (!browserSession.currentPage) {
+      if (scope === 'site') {
+        return '⚠️ 当前没有已打开页面，无法执行站内搜索。请先打开站点，或改用 scope="web"。';
+      }
+      return goWeb('当前无页面，自动回退');
+    }
+
+    const selector = await detectSiteSearchSelector();
+    if (!selector) {
+      if (scope === 'site') {
+        return '⚠️ 未找到站内搜索框。可先调用 browser_find 定位搜索输入框，或改用 scope="web"。';
+      }
+      return goWeb('未找到站内搜索框，自动回退');
+    }
+
+    const page = browserSession.currentPage!;
+    const locator = page.locator(selector).first();
+    await locator.click({ timeout: 5000 }).catch(() => {});
+    await locator.fill(q, { timeout: 8000 });
+    await locator.press('Enter').catch(() => {});
+    await waitSettle();
+    const siteSummary = await readPageSummary('brief');
+    return `✅ 已执行站内搜索（selector=${selector}）\n\n${siteSummary}`;
+  },
+};
+
+// ── 1.7 browser_read_page ─────────────────────────────────────────
+
+interface ReadPageParams { detail?: 'brief' | 'full' }
+
+const browserReadPage: ToolDefinition<ReadPageParams> = {
+  schema: {
+    type: 'function',
+    function: {
+      name: 'browser_read_page',
+      description:
+        '读取当前页面的核心信息：标题、URL、页面类型（搜索结果/内容详情/列表页等）、\n' +
+        'H1~H3 标题大纲（帮助理解页面层级）、主内容区链接（导航栏已过滤），\n' +
+        '以及（detail=full 时）正文摘要和可交互元素（含 browser_click_smart / browser_type_smart 操作提示）。\n' +
+        '【何时调用】\n' +
+        '  • 导航（browser_open/browser_click_smart）后，不确定是否到达目标页时 → detail=brief\n' +
+        '  • 需要理解页面内容、找到正文或操作元素时 → detail=full\n' +
+        'detail=brief（默认）：~150 token，快速判断页面类型和可点链接。\n' +
+        'detail=full：~700 token，额外返回正文摘要和输入框/按钮列表（含操作提示）。\n' +
+        '若结果仍不足以理解页面（如动态渲染/图片为主/内容稀少），应主动调用 browser_screenshot 截图后再决策。',
+      parameters: {
+        type: 'object',
+        properties: {
+          detail: {
+            type: 'string',
+            enum: ['brief', 'full'],
+            description: 'brief=快速概览（默认），full=深度提取（含正文+可交互元素）',
+          },
+        },
+        required: [],
+      },
+    },
+  },
+
+  async execute({ detail = 'brief' }) {
+    const page = browserSession.currentPage;
+    if (!page) return '❌ 浏览器未打开，请先调用 browser_open';
+
+    const result = await readPageSummary(detail);
+
+    // 截图建议：分两档
+    //   极贫乏（无大纲+无链接）→ 强烈建议
+    //   内容一般（链接/大纲数量少，或 full 模式无正文）→ 轻度建议
+    const hasOutline = result.includes('【页面大纲');
+    const hasLinks = result.includes('【主内容链接');
+    const hasBody = detail === 'full' && result.includes('【正文摘要');
+    const isThin = !hasOutline && !hasLinks;
+    const isSparse = !isThin && (result.length < 350 || (detail === 'full' && !hasBody));
+
+    if (isThin) {
+      return (
+        result +
+        '\n\n⚠️ 页面文本信息极少（可能是纯图片/Canvas/动态渲染页面）。' +
+        '\n强烈建议立即调用 browser_screenshot 截图，根据画面视觉内容继续决策。'
+      );
+    }
+
+    if (isSparse) {
+      return (
+        result +
+        '\n\n💡 页面结构信息有限，若以上内容不足以判断下一步操作，' +
+        '请调用 browser_screenshot 截图直观确认页面状态。'
+      );
+    }
+
+    return result;
   },
 };
 
@@ -1017,7 +1422,8 @@ const browserFind: ToolDefinition<FindParams> = {
         '返回结果中"→ 操作"列是建议（根据元素类型推断）：\n' +
         '  • → browser_open("https://...")           ：<a>链接，直接导航\n' +
         '  • → browser_click_smart(text="...")       ：按钮/交互元素，用智能点击 Skill\n' +
-        '  • → browser_type_smart(description="...")：输入框，用智能输入 Skill\n' +
+        '  • → browser_search(query="...", scope="site")：搜索框，优先站内搜索\n' +
+        '  • → browser_type_smart(description="...")：普通输入框，用智能输入 Skill\n' +
         '【用法】\n' +
         '  不传 keyword/keywords → 列出页面所有可见可操作元素（最多150个）\n' +
         '  传 keyword            → 单关键词（也可写成"词1 词2"，会自动拆分）\n' +
@@ -1158,9 +1564,18 @@ const browserFind: ToolDefinition<FindParams> = {
           const isFormField = isContentEditable || tag === 'textarea' || tag === 'select' ||
             (tag === 'input' && !['button', 'submit', 'reset', 'checkbox', 'radio', 'file', 'image'].includes((type || '').toLowerCase()));
 
-          // 推荐操作（<a> 直接导航；输入框建议输入；其余点击）
+          const inputType = (type || '').toLowerCase();
+          const searchHaystack = (text + ' ' + id + ' ' + name + ' ' + placeholder + ' ' + classes).toLowerCase();
+          const isSearchField = isFormField && (
+            inputType === 'search' ||
+            /search|搜索|查找|keyword|关键词|query/.test(searchHaystack)
+          );
+
+          // 推荐操作（<a> 直接导航；搜索框优先 browser_search；其他输入框建议输入；其余点击）
           const action = href
             ? 'browser_open("' + href + '")'
+            : isSearchField
+              ? 'browser_search({ query: "...", scope: "site" })'
             : isContentEditable
               ? 'browser_type_rich("' + cssSelector + '", "...")'
               : isFormField
@@ -1196,6 +1611,7 @@ const browserFind: ToolDefinition<FindParams> = {
       `🔍 ${kw}可操作元素（共 ${elements.length} 个，matchMode=${matchMode}）：\n${lines.join('\n')}\n\n` +
       `💡 直接执行"→ 操作"列：\n` +
       `  • browser_open(href)   ← <a>链接，直接导航，无需点击\n` +
+      `  • browser_search(query, scope) ← 搜索框/搜索意图，优先用 scope=site 或 auto\n` +
       `  • browser_click(sel)   ← 按钮/交互元素，按 ②③④ 决策树点击\n` +
       `  • browser_type(sel, text) / browser_type_rich(sel, text) ← 输入框/富文本`
     );
@@ -1407,6 +1823,8 @@ const browserGetElementsHtml: ToolDefinition<GetElementsHtmlParams> = {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export const browserTools: ToolDefinition<any>[] = [
   browserOpen,
+  browserSearch,
+  browserReadPage,
   browserBack,
   browserRefresh,
   browserWait,

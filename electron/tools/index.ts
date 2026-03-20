@@ -23,6 +23,7 @@ import { ocrTools } from './impl/ocr';
 import agentStartTool from './impl/agentTool';
 import runCommandTool from './impl/runCommand';
 import discordSendTool from './impl/discordSend';
+import readManualTool from './impl/manual';
 import { setAgentRegistry } from '../agent/agentRegistry';
 import { skillList } from '../skills/index';
 import { setSkillRegistry } from '../skills/skillContext';
@@ -32,7 +33,8 @@ const registry = new ToolRegistry()
   .register(calculatorTool)
   .register(screenshotTool)
   .register(runCommandTool)
-  .register(discordSendTool);
+  .register(discordSendTool)
+  .register(readManualTool);
 
 // 批量注册所有浏览器工具
 for (const tool of browserTools) {

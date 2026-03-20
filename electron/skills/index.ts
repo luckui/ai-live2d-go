@@ -20,10 +20,12 @@ import browserTypeSmartSkill from './impl/browserType';
 import checkPythonEnvSkill from './impl/checkPythonEnv';
 import writeFileSkill from './impl/writeFile';
 import discordSendFileSkill from './impl/discordSendFile';
+import browserOpenSkill from './impl/browserOpen';
 
 // ── Skill 列表 ────────────────────────────────────────────────
 const skillList: ToolDefinition<never>[] = [
   openTerminalSkill as ToolDefinition<never>,
+  browserOpenSkill as ToolDefinition<never>,
   browserClickSmartSkill as ToolDefinition<never>,
   browserTypeSmartSkill as ToolDefinition<never>,
   checkPythonEnvSkill as ToolDefinition<never>,

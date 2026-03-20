@@ -61,7 +61,11 @@ const writeFileSkill: ToolDefinition<WriteFileParams> = {
         properties: {
           path: {
             type: 'string',
-            description: '目标文件路径，支持绝对路径（如 C:/Users/me/foo.txt）或相对路径。',
+            description:
+              '目标文件路径，支持绝对路径（如 C:/Users/me/foo.txt）或相对路径。\n' +
+              '【重要】禁止猜测桌面/文档等路径，必须先用 run_command 查询后再填写：\n' +
+              '  桌面路径：run_command("echo %USERPROFILE%\\Desktop")\n' +
+              '  文档路径：run_command("echo %USERPROFILE%\\Documents")',
           },
           content: {
             type: 'string',
