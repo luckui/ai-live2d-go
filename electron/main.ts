@@ -22,6 +22,7 @@ import { sendChatMessage, setToolEventListener } from './aiService';
 import { triggerConversationLeave, memoryManager, globalMemoryManager, runStartupCatchUp, startIdleScheduler } from './memory/index';
 import aiConfig from './ai.config';
 import { startBridges, stopBridges } from './bridges/index';
+import { DiscordAdapter } from './bridges/adapters/discord';
 
 // ── 实运行时加载持久化的 LLM 配置 ──────────────────────────────
 
@@ -98,6 +99,22 @@ function createWindow(): void {
     }
   });
   mainWin = win;
+
+  // 启动时用 screen-saver 层级，确保盖过全屏应用和其他 alwaysOnTop 窗口
+  win.setAlwaysOnTop(true, 'screen-saver');
+
+  // 置顶切换
+  let pinned = true;
+  ipcMain.on('window-pin', () => {
+    pinned = !pinned;
+    if (pinned) {
+      win.setAlwaysOnTop(true, 'screen-saver');
+    } else {
+      win.setAlwaysOnTop(false);
+    }
+    win.webContents.send('window-pin-state', pinned);
+  });
+  win.on('closed', () => ipcMain.removeAllListeners('window-pin'));
 
   // ── 工具调用调试事件：AI 每次调用工具时实时推送给渲染层 ──────
   setToolEventListener((ev) => {
@@ -177,6 +194,53 @@ function createWindow(): void {
       providers: newCfg.providers,
       deletedProviders: newCfg.deletedProviders ?? [],
     }));
+  });
+
+  // ── Discord 设置 ──────────────────────────────────────────
+  ipcMain.handle('discord:get', () => {
+    return {
+      enabled:         process.env['DISCORD_ENABLED'] === 'true',
+      token:           process.env['DISCORD_TOKEN'] ?? '',
+      allowedChannels: process.env['DISCORD_ALLOWED_CHANNELS'] ?? '',
+      proxyUrl:        process.env['DISCORD_PROXY'] ?? '',
+    };
+  });
+
+  ipcMain.handle('discord:status', () => {
+    return DiscordAdapter.activeClient !== null ? 'online' : 'offline';
+  });
+
+  ipcMain.handle('discord:save', async (_e, cfg: {
+    enabled: boolean; token: string; allowedChannels: string; proxyUrl: string;
+  }) => {
+    // 写入 .env 文件（项目根目录）
+    const fs = require('fs') as typeof import('fs');
+    const envPath = app.isPackaged
+      ? join(process.resourcesPath, '.env')
+      : join(app.getAppPath(), '.env');
+
+    // 读取现有 .env，更新 DISCORD_* 字段
+    let envContent = '';
+    try { envContent = fs.readFileSync(envPath, 'utf-8'); } catch { /* 文件不存在时从空白开始 */ }
+
+    const lines = envContent.split('\n').filter(l => !/^DISCORD_/.test(l.trim()));
+    lines.push(`DISCORD_ENABLED=${cfg.enabled}`);
+    lines.push(`DISCORD_TOKEN=${cfg.token}`);
+    lines.push(`DISCORD_ALLOWED_CHANNELS=${cfg.allowedChannels}`);
+    lines.push(`DISCORD_PROXY=${cfg.proxyUrl}`);
+    fs.writeFileSync(envPath, lines.join('\n'), 'utf-8');
+
+    // 同步更新 process.env，让下次 loadBridgeConfig() 读到最新值
+    process.env['DISCORD_ENABLED'] = String(cfg.enabled);
+    process.env['DISCORD_TOKEN'] = cfg.token;
+    process.env['DISCORD_ALLOWED_CHANNELS'] = cfg.allowedChannels;
+    process.env['DISCORD_PROXY'] = cfg.proxyUrl;
+
+    // 重启 bridges
+    await stopBridges();
+    const convs = listConversations();
+    const convId = convs.length > 0 ? convs[0].id : createConversation().id;
+    await startBridges(convId).catch(e => console.error('[Discord] 重启失败:', (e as Error).message));
   });
 }
 

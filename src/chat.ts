@@ -24,6 +24,8 @@ declare global {
       dragWindow: (dx: number, dy: number) => void;
       closeWindow: () => void;
       resizeWindow: (height: number) => void;
+      togglePin: () => void;
+      onPinState: (cb: (pinned: boolean) => void) => void;
     };
     chatAPI?: {
       createConversation(): Promise<Conversation>;

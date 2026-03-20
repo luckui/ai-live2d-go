@@ -82,83 +82,164 @@
 
       </div><!-- /#chat-panel -->
 
-      <!-- ===== LLM 设置面板（从右滑入，全屏覆盖） ===== -->
+            <!-- ===== 设置面板（从右滑入，全屏覆盖） ===== -->
       <div id="settings-panel">
 
         <div id="settings-hdr" class="drag-region">
           <button id="settings-back" class="ctrl-btn no-drag">&lsaquo;</button>
-          <span class="settings-ttl">LLM 服务商设置</span>
+          <span class="settings-ttl">设置</span>
+        </div>
+
+        <!-- Tab 切换栏 -->
+        <div id="s-tabs" class="no-drag">
+          <button class="s-tab s-tab-active" data-tab="llm">🤖 AI 模型</button>
+          <button class="s-tab" data-tab="bridges">🔗 平台桥接</button>
         </div>
 
         <div id="settings-scroller">
 
-          <!-- 全局设置 -->
-          <section class="s-section">
-            <h3 class="s-title">全局</h3>
-            <label class="s-label">对话记忆轮数
-              <input id="s-rounds" type="number" min="1" max="200" class="s-input" />
-              <span class="s-hint">每次请求携带最近 N 轮上下文（1轮 = 1问1答，超出部分仍存数据库）</span>
-            </label>
-            <label class="s-label">Agent 模式
-              <select id="s-agent-mode" class="s-input">
-                <option value="off">关闭（默认）：普通聊天，不自动进入 Agent</option>
-                <option value="force">强制：每条消息都走 Agent 自动规划执行</option>
-              </select>
-              <span class="s-hint">建议日常用“关闭”，需要全自动时再切到“强制”</span>
-            </label>
-          </section>
+          <!-- ════ Tab: LLM ════ -->
+          <div id="s-tab-llm" class="s-tab-pane">
 
-          <!-- 服务商列表 -->
-          <section class="s-section">
-            <div class="s-section-row">
-              <h3 class="s-title">服务商</h3>
-              <button id="s-add-btn" class="s-small-btn">+ 新增</button>
-            </div>
-            <div id="s-provider-pills"></div>
-          </section>
-
-          <!-- 服务商表单 -->
-          <section class="s-section" id="s-form-section">
-            <div class="s-section-row">
-              <h3 class="s-title">服务商配置</h3>
-              <div class="s-btn-group">
-                <button id="s-set-active-btn" class="s-small-btn">设为当前</button>
-                <button id="s-del-btn" class="s-small-btn s-del-btn">删除</button>
-              </div>
-            </div>
-
-            <label class="s-label">名称
-              <input id="s-name" type="text" class="s-input" placeholder="我的服务商" />
-            </label>
-            <label class="s-label">Base URL
-              <input id="s-baseUrl" type="text" class="s-input" placeholder="https://api.openai.com/v1" />
-            </label>
-            <label class="s-label">API Key
-              <div class="s-input-row">
-                <input id="s-apiKey" type="password" class="s-input" placeholder="sk-…" />
-                <button class="s-eye-btn" id="s-eye-btn">👁</button>
-              </div>
-            </label>
-            <label class="s-label">模型 ID
-              <input id="s-model" type="text" class="s-input" placeholder="gpt-4o-mini" />
-            </label>
-            <div class="s-row-2">
-              <label class="s-label">温度
-                <input id="s-temp" type="number" class="s-input" min="0" max="2" step="0.05" />
+            <!-- 全局设置 -->
+            <section class="s-section">
+              <h3 class="s-title">全局</h3>
+              <label class="s-label">对话记忆轮数
+                <input id="s-rounds" type="number" min="1" max="200" class="s-input" />
+                <span class="s-hint">每次请求携带最近 N 轮上下文（1轮 = 1问1答，超出部分仍存数据库）</span>
               </label>
-              <label class="s-label">Max Tokens
-                <input id="s-tokens" type="number" class="s-input" min="128" step="128" />
+              <label class="s-label">Agent 模式
+                <select id="s-agent-mode" class="s-input">
+                  <option value="off">关闭（默认）：普通聊天，不自动进入 Agent</option>
+                  <option value="force">强制：每条消息都走 Agent 自动规划执行</option>
+                </select>
+                <span class="s-hint">建议日常用“关闭”，需要全自动时再切到“强制”</span>
               </label>
-            </div>
-            <label class="s-label">系统提示词
-              <textarea id="s-sysprompt" class="s-textarea" rows="4" placeholder="你是一个…"></textarea>
-            </label>
-          </section>
+            </section>
 
-          <!-- 保存按钞 -->
-          <div class="s-save-row">
-            <button id="settings-save-btn" class="s-save-btn">保存设置</button>
-          </div>
+            <!-- 服务商列表 -->
+            <section class="s-section">
+              <div class="s-section-row">
+                <h3 class="s-title">服务商</h3>
+                <button id="s-add-btn" class="s-small-btn">+ 新增</button>
+              </div>
+              <div id="s-provider-pills"></div>
+            </section>
+
+            <!-- 服务商表单 -->
+            <section class="s-section" id="s-form-section">
+              <div class="s-section-row">
+                <h3 class="s-title">服务商配置</h3>
+                <div class="s-btn-group">
+                  <button id="s-set-active-btn" class="s-small-btn">设为当前</button>
+                  <button id="s-del-btn" class="s-small-btn s-del-btn">删除</button>
+                </div>
+              </div>
+
+              <label class="s-label">名称
+                <input id="s-name" type="text" class="s-input" placeholder="我的服务商" />
+              </label>
+              <label class="s-label">Base URL
+                <input id="s-baseUrl" type="text" class="s-input" placeholder="https://api.openai.com/v1" />
+              </label>
+              <label class="s-label">API Key
+                <div class="s-input-row">
+                  <input id="s-apiKey" type="password" class="s-input" placeholder="sk-…" />
+                  <button class="s-eye-btn" id="s-eye-btn">👁</button>
+                </div>
+              </label>
+              <label class="s-label">模型 ID
+                <input id="s-model" type="text" class="s-input" placeholder="gpt-4o-mini" />
+              </label>
+              <div class="s-row-2">
+                <label class="s-label">温度
+                  <input id="s-temp" type="number" class="s-input" min="0" max="2" step="0.05" />
+                </label>
+                <label class="s-label">Max Tokens
+                  <input id="s-tokens" type="number" class="s-input" min="128" step="128" />
+                </label>
+              </div>
+              <label class="s-label">系统提示词
+                <textarea id="s-sysprompt" class="s-textarea" rows="4" placeholder="你是一个…"></textarea>
+              </label>
+            </section>
+
+            <div class="s-save-row">
+              <button id="settings-save-btn" class="s-save-btn">保存设置</button>
+            </div>
+
+          </div><!-- /#s-tab-llm -->
+
+          <!-- ════ Tab: 平台桥接 ════ -->
+          <div id="s-tab-bridges" class="s-tab-pane s-tab-pane-hidden">
+
+            <!-- Master-detail 容器 -->
+            <div id="s-bridges-layout">
+
+              <!-- 左侧：平台列表 -->
+              <ul id="s-bridges-list">
+                <li class="s-bridge-item s-bridge-active" data-bridge="discord">
+                  <span class="s-bridge-icon">💬</span>
+                  <span class="s-bridge-name">Discord</span>
+                  <span id="dc-list-dot" class="s-bridge-dot s-status-off"></span>
+                </li>
+                <!-- 未来在此追加：Telegram、QQ 等 -->
+              </ul>
+
+              <!-- 右侧：配置详情 -->
+              <div id="s-bridges-detail">
+
+                <!-- ── Discord 配置面板 ── -->
+                <div id="s-bridge-discord" class="s-bridge-pane">
+
+                  <section class="s-section">
+                    <h3 class="s-title">Bot 连接</h3>
+                    <label class="s-label s-label-row">
+                      <span class="s-label-text">启用 Discord Bot</span>
+                      <label class="s-toggle">
+                        <input type="checkbox" id="dc-enabled" />
+                        <span class="s-toggle-slider"></span>
+                      </label>
+                    </label>
+                    <label class="s-label">Bot Token
+                      <div class="s-input-row">
+                        <input id="dc-token" type="password" class="s-input" placeholder="Bot Token（来自 Discord Developer Portal）" />
+                        <button class="s-eye-btn" id="dc-eye-btn">👁</button>
+                      </div>
+                      <span class="s-hint">前往 discord.com/developers/applications 创建 Bot 后复制</span>
+                    </label>
+                  </section>
+
+                  <section class="s-section">
+                    <h3 class="s-title">频道与代理</h3>
+                    <label class="s-label">白名单频道 ID
+                      <input id="dc-channels" type="text" class="s-input" placeholder="频道ID1,频道ID2（留空=响应所有频道）" />
+                      <span class="s-hint">多个 ID 用英文逗号分隔，留空则 Bot 响应所有频道消息</span>
+                    </label>
+                    <label class="s-label">代理地址（国内必填）
+                      <input id="dc-proxy" type="text" class="s-input" placeholder="http://127.0.0.1:7890" />
+                      <span class="s-hint">HTTP/HTTPS 代理，用于访问 Discord API（国内环境必须配置）</span>
+                    </label>
+                  </section>
+
+                  <section class="s-section">
+                    <h3 class="s-title">Bot 状态</h3>
+                    <div class="s-status-row">
+                      <span id="dc-status-dot" class="s-status-dot s-status-off"></span>
+                      <span id="dc-status-text">未启动</span>
+                    </div>
+                  </section>
+
+                  <div class="s-save-row">
+                    <button id="dc-save-btn" class="s-save-btn">保存并重启 Bot</button>
+                  </div>
+
+                </div><!-- /#s-bridge-discord -->
+
+              </div><!-- /#s-bridges-detail -->
+            </div><!-- /#s-bridges-layout -->
+
+          </div><!-- /#s-tab-bridges -->
 
         </div><!-- /#settings-scroller -->
       </div><!-- /#settings-panel -->

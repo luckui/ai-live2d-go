@@ -22,11 +22,23 @@ interface RuntimeConfig {
   deletedProviders?: string[];
 }
 
+interface DiscordConfig {
+  enabled: boolean;
+  token: string;
+  allowedChannels: string;
+  proxyUrl: string;
+}
+
 declare global {
   interface Window {
     settingsAPI?: {
       get(): Promise<RuntimeConfig>;
       save(cfg: RuntimeConfig): Promise<void>;
+    };
+    discordAPI?: {
+      get(): Promise<DiscordConfig>;
+      save(cfg: DiscordConfig): Promise<void>;
+      getStatus(): Promise<'online' | 'offline'>;
     };
   }
 }
@@ -128,6 +140,57 @@ async function loadSettingsUI(): Promise<void> {
   renderForm();
 }
 
+// ── Discord UI ────────────────────────────────────────
+
+async function loadDiscordUI(): Promise<void> {
+  if (!window.discordAPI) return;
+  const dc = await window.discordAPI.get();
+  (document.getElementById('dc-enabled')  as HTMLInputElement).checked = dc.enabled;
+  (document.getElementById('dc-token')    as HTMLInputElement).value   = dc.token;
+  (document.getElementById('dc-channels') as HTMLInputElement).value   = dc.allowedChannels;
+  (document.getElementById('dc-proxy')    as HTMLInputElement).value   = dc.proxyUrl;
+  await refreshDiscordStatus();
+}
+
+async function refreshDiscordStatus(): Promise<void> {
+  if (!window.discordAPI) return;
+  const status = await window.discordAPI.getStatus();
+  const dot      = document.getElementById('dc-status-dot')  as HTMLElement;
+  const listDot  = document.getElementById('dc-list-dot')    as HTMLElement | null;
+  const text     = document.getElementById('dc-status-text') as HTMLElement;
+  const cls = status === 'online' ? 's-status-on' : 's-status-off';
+  dot.className      = `s-status-dot ${cls}`;
+  if (listDot) listDot.className = `s-bridge-dot ${cls}`;
+  text.textContent   = status === 'online' ? '已连接' : '未启动';
+}
+
+async function saveDiscordSettings(): Promise<void> {
+  if (!window.discordAPI) return;
+  const cfg: DiscordConfig = {
+    enabled:         (document.getElementById('dc-enabled')  as HTMLInputElement).checked,
+    token:           (document.getElementById('dc-token')    as HTMLInputElement).value.trim(),
+    allowedChannels: (document.getElementById('dc-channels') as HTMLInputElement).value.trim(),
+    proxyUrl:        (document.getElementById('dc-proxy')    as HTMLInputElement).value.trim(),
+  };
+  const btn = document.getElementById('dc-save-btn') as HTMLButtonElement;
+  btn.textContent = '保存中…';
+  btn.disabled = true;
+  try {
+    await window.discordAPI.save(cfg);
+    btn.textContent = '✓ 已保存';
+    // 给 bot 2 秒启动时间再刷新状态
+    setTimeout(() => {
+      void refreshDiscordStatus();
+      btn.textContent = '保存并重启 Bot';
+      btn.disabled = false;
+    }, 2000);
+  } catch (e) {
+    btn.textContent = '保存失败';
+    setTimeout(() => { btn.textContent = '保存并重启 Bot'; btn.disabled = false; }, 2000);
+    console.error('[Discord save]', e);
+  }
+}
+
 // ── 保存 ──────────────────────────────────────────────
 
 async function saveSettings(): Promise<void> {
@@ -205,12 +268,17 @@ export function openSettings(): void {
   if (savedWindowHeight < 620) {
     window.electronAPI?.resizeWindow(620);
   }
+  // 暂停 canvas 区域的 Electron 拖拽捕获，否则设置面板上半部分点击会被 OS 拦截
+  document.getElementById('canvas-container')?.classList.add('drag-region-suspended');
   document.getElementById('settings-panel')?.classList.add('visible');
-  loadSettingsUI();
+  void loadSettingsUI();
+  void loadDiscordUI();
 }
 
 export function closeSettings(): void {
   document.getElementById('settings-panel')?.classList.remove('visible');
+  // 恢复 canvas 区域的拖拽功能
+  document.getElementById('canvas-container')?.classList.remove('drag-region-suspended');
   // 恢复原始窗口高度
   if (savedWindowHeight > 0 && savedWindowHeight < 620) {
     window.electronAPI?.resizeWindow(savedWindowHeight);
@@ -253,6 +321,45 @@ export function initSettings(): void {
       input.type = 'password';
       btn.textContent = '👁';
     }
+  });
+
+  // ── 选项卡切换 ───────────────────────────────────────
+  document.querySelectorAll<HTMLButtonElement>('.s-tab').forEach((tabBtn) => {
+    tabBtn.addEventListener('click', () => {
+      const target = tabBtn.dataset['tab'];
+      document.querySelectorAll<HTMLButtonElement>('.s-tab').forEach((b) =>
+        b.classList.toggle('s-tab-active', b === tabBtn)
+      );
+      document.querySelectorAll<HTMLElement>('.s-tab-pane').forEach((pane) => {
+        const match = pane.id === `s-tab-${target}`;
+        pane.classList.toggle('s-tab-pane-hidden', !match);
+      });
+    });
+  });
+
+  // ── 平台列表左侧切换 ──────────────────────────────
+  document.querySelectorAll<HTMLElement>('.s-bridge-item').forEach((item) => {
+    item.addEventListener('click', () => {
+      const bridge = item.dataset['bridge'];
+      // 切换激活项
+      document.querySelectorAll<HTMLElement>('.s-bridge-item').forEach((el) =>
+        el.classList.toggle('s-bridge-active', el === item)
+      );
+      // 切换详情面板
+      document.querySelectorAll<HTMLElement>('.s-bridge-pane').forEach((pane) =>
+        pane.classList.toggle('s-bridge-pane-hidden', pane.id !== `s-bridge-${bridge}`)
+      );
+    });
+  });
+
+  // ── Discord 表单事件 ─────────────────────────────────
+  document.getElementById('dc-save-btn')?.addEventListener('click', () => void saveDiscordSettings());
+
+  document.getElementById('dc-eye-btn')?.addEventListener('click', () => {
+    const input = document.getElementById('dc-token') as HTMLInputElement;
+    const btn   = document.getElementById('dc-eye-btn') as HTMLButtonElement;
+    if (input.type === 'password') { input.type = 'text';     btn.textContent = '🙈'; }
+    else                           { input.type = 'password'; btn.textContent = '👁'; }
   });
 
   // 防止面板内所有输入触发窗口拖动

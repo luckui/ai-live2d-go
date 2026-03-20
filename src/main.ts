@@ -14,6 +14,16 @@ if (window.location.protocol === 'file:') {
 document.addEventListener('DOMContentLoaded', () => {
   initSettings();
   initChat();
+
+  // ── 置顶按鈕 ──
+  const pinBtn = document.getElementById('pin-btn') as HTMLButtonElement | null;
+  window.electronAPI?.onPinState((pinned) => {
+    if (pinBtn) {
+      pinBtn.title   = pinned ? '取消置顶' : '置顶';
+      pinBtn.style.opacity = pinned ? '1' : '0.4';
+    }
+  });
+  pinBtn?.addEventListener('click', () => window.electronAPI?.togglePin());
 });
 
 // ─── 等待页面加载后初始化 Live2D ───────────────────────
