@@ -62,8 +62,10 @@ const writeFileSkill: ToolDefinition<WriteFileParams> = {
           path: {
             type: 'string',
             description:
-              '目标文件路径，支持绝对路径（如 C:/Users/me/foo.txt）或相对路径。\n' +
-              '【重要】禁止猜测桌面/文档等路径，必须先用 run_command 查询后再填写：\n' +
+              '目标文件路径，必须是绝对路径（如 C:/Users/xxx/Desktop/foo.txt）。\n' +
+              '【重要】禁止猜测和使用相对路径（Desktop/foo.txt、./foo.txt 等均禁止），\n' +
+              '相对路径会被写入程序内部目录而非用户期望的位置。\n' +
+              '必须先用 run_command 查询真实路径再填写：\n' +
               '  桌面路径：run_command("echo %USERPROFILE%\\Desktop")\n' +
               '  文档路径：run_command("echo %USERPROFILE%\\Documents")',
           },
@@ -93,10 +95,16 @@ const writeFileSkill: ToolDefinition<WriteFileParams> = {
   isSkill: true,
 
   async execute({ path: filePath, content, mode, encoding = 'utf8' }): Promise<ToolExecuteResult> {
-    // 解析为绝对路径
-    const absPath = path.isAbsolute(filePath)
-      ? filePath
-      : path.resolve(process.cwd(), filePath);
+    // 拒绝相对路径：相对路径会被 resolve 到程序内部 cwd，远非用户期望的位置
+    if (!path.isAbsolute(filePath)) {
+      return (
+        `❌ 错误：path 必须是绝对路径，收到的是相对路径："${filePath}"。\n` +
+        `请先用 run_command("echo %USERPROFILE%\\\\Desktop") 查询真实路径，再重新调用 write_file。`
+      );
+    }
+
+    // 统一成 Windows 路径分隔符
+    const absPath = filePath.replace(/\//g, '\\');
 
     const fileExists = fs.existsSync(absPath);
 

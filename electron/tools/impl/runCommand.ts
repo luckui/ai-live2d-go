@@ -46,7 +46,7 @@ const runCommandTool: ToolDefinition<RunCommandParams> = {
           },
           timeoutMs: {
             type: 'number',
-            description: '超时毫秒数，默认 15000（15 秒）。长耗时命令可适当调大。',
+            description: '超时毫秒数，默认 30000（30 秒）。WMI 类命令（Get-CimInstance）在有断开网络盘时可能需要 30~60 秒，可传 60000。',
           },
           cwd: {
             type: 'string',
@@ -58,7 +58,7 @@ const runCommandTool: ToolDefinition<RunCommandParams> = {
     },
   },
 
-  async execute({ command, timeoutMs = 15000, cwd }) {
+  async execute({ command, timeoutMs = 30000, cwd }) {
     return new Promise<string>((resolve) => {
       const isWin = process.platform === 'win32';
       const shell = isWin ? 'cmd.exe' : '/bin/sh';
