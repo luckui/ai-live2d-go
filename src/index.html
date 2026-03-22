@@ -93,6 +93,7 @@
         <!-- Tab 切换栏 -->
         <div id="s-tabs" class="no-drag">
           <button class="s-tab s-tab-active" data-tab="llm">🤖 AI 模型</button>
+          <button class="s-tab" data-tab="tts">🔊 语音</button>
           <button class="s-tab" data-tab="bridges">🔗 平台桥接</button>
         </div>
 
@@ -169,6 +170,67 @@
             </div>
 
           </div><!-- /#s-tab-llm -->
+
+          <!-- ════ Tab: 语音合成（TTS） ════ -->
+          <div id="s-tab-tts" class="s-tab-pane s-tab-pane-hidden">
+
+            <section class="s-section">
+              <h3 class="s-title">基本配置</h3>
+              <label class="s-label s-label-row">
+                <span class="s-label-text">启用 TTS 语音合成</span>
+                <label class="s-toggle">
+                  <input type="checkbox" id="tts-enabled" />
+                  <span class="s-toggle-slider"></span>
+                </label>
+              </label>
+              <label class="s-label">服务地址
+                <input id="tts-url" type="text" class="s-input" placeholder="http://your-tts-server" />
+                <span class="s-hint">TTS 服务根地址，不含路径（如 http://8.153.95.187）</span>
+              </label>
+              <label class="s-label">API Key
+                <div class="s-input-row">
+                  <input id="tts-apikey" type="password" class="s-input" placeholder="Bearer Token（留空则不发送认证头）" />
+                  <button class="s-eye-btn" id="tts-eye-btn">👁</button>
+                </div>
+              </label>
+            </section>
+
+            <section class="s-section">
+              <h3 class="s-title">语音参数</h3>
+              <div class="s-row-2">
+                <label class="s-label">音色
+                  <input id="tts-speaker" type="text" class="s-input" placeholder="bailu" />
+                  <span class="s-hint">音色 ID，查询服务 /speakers 获取列表</span>
+                </label>
+                <label class="s-label">语言
+                  <select id="tts-language" class="s-input">
+                    <option value="Auto">Auto（自动识别）</option>
+                    <option value="zh">中文</option>
+                    <option value="en">English</option>
+                    <option value="ja">日本語</option>
+                    <option value="ko">한국어</option>
+                  </select>
+                </label>
+              </div>
+            </section>
+
+            <section class="s-section">
+              <h3 class="s-title">连通性测试</h3>
+              <div class="s-test-row">
+                <button id="tts-test-btn" class="s-small-btn">🔍 测试连接</button>
+                <div class="s-status-row" style="margin:0;padding:0">
+                  <span id="tts-status-dot" class="s-status-dot s-status-off"></span>
+                  <span id="tts-status-text" class="s-status-label">-</span>
+                </div>
+              </div>
+              <span class="s-hint">测试将对当前填写的服务地址发起 GET /health/ 请求</span>
+            </section>
+
+            <div class="s-save-row">
+              <button id="tts-save-btn" class="s-save-btn">保存设置</button>
+            </div>
+
+          </div><!-- /#s-tab-tts -->
 
           <!-- ════ Tab: 平台桥接 ════ -->
           <div id="s-tab-bridges" class="s-tab-pane s-tab-pane-hidden">

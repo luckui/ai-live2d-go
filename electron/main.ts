@@ -23,6 +23,7 @@ import { triggerConversationLeave, memoryManager, globalMemoryManager, runStartu
 import aiConfig from './ai.config';
 import { startBridges, stopBridges } from './bridges/index';
 import { DiscordAdapter } from './bridges/adapters/discord';
+import { ttsService } from './ttsService';
 
 // ── 实运行时加载持久化的 LLM 配置 ──────────────────────────────
 
@@ -241,6 +242,74 @@ function createWindow(): void {
     const convs = listConversations();
     const convId = convs.length > 0 ? convs[0].id : createConversation().id;
     await startBridges(convId).catch(e => console.error('[Discord] 重启失败:', (e as Error).message));
+  });
+
+  // ── TTS ──────────────────────────────────────────────────────
+  ipcMain.handle('tts:speak', async (_e, text: string) => {
+    if (!ttsService.isEnabled) return null;
+    try {
+      const wav = await ttsService.speak(text);
+      const data = Buffer.from(wav).toString('base64');
+      return { data };
+    } catch (e) {
+      console.warn('[TTS] speak 失败:', (e as Error).message);
+      return null;
+    }
+  });
+
+  ipcMain.handle('tts:isEnabled', () => ttsService.isEnabled);
+
+  ipcMain.handle('tts:debug', () => ttsService.debugInfo());
+
+  ipcMain.handle('tts:health', () => ttsService.health());
+
+  // ── TTS 配置读写（设置 UI 用）──────────────────────────────────
+  ipcMain.handle('tts:config:get', () => ({
+    enabled:  process.env['TTS_ENABLED']  === 'true',
+    url:      process.env['TTS_URL']      ?? '',
+    apiKey:   process.env['TTS_API_KEY']  ?? '',
+    speaker:  process.env['TTS_SPEAKER']  ?? '',
+    language: process.env['TTS_LANGUAGE'] ?? 'Auto',
+  }));
+
+  ipcMain.handle('tts:config:save', async (_e, newCfg: {
+    enabled: boolean; url: string; apiKey: string; speaker: string; language: string;
+  }) => {
+    const fs = require('fs') as typeof import('fs');
+    const envPath = app.isPackaged
+      ? join(process.resourcesPath, '.env')
+      : join(app.getAppPath(), '.env');
+
+    let envContent = '';
+    try { envContent = fs.readFileSync(envPath, 'utf-8'); } catch { /* 文件不存在时从空白开始 */ }
+
+    const lines = envContent.split('\n').filter(l => !/^TTS_/.test(l.trim()));
+    lines.push(`TTS_ENABLED=${newCfg.enabled}`);
+    lines.push(`TTS_URL=${newCfg.url}`);
+    lines.push(`TTS_API_KEY=${newCfg.apiKey}`);
+    lines.push(`TTS_SPEAKER=${newCfg.speaker}`);
+    lines.push(`TTS_LANGUAGE=${newCfg.language}`);
+    fs.writeFileSync(envPath, lines.join('\n'), 'utf-8');
+
+    process.env['TTS_ENABLED']  = String(newCfg.enabled);
+    process.env['TTS_URL']      = newCfg.url;
+    process.env['TTS_API_KEY']  = newCfg.apiKey;
+    process.env['TTS_SPEAKER']  = newCfg.speaker;
+    process.env['TTS_LANGUAGE'] = newCfg.language;
+
+    ttsService.reset(); // 下次调用 speak() 时重新初始化
+  });
+
+  ipcMain.handle('tts:config:test', async (_e, url: string) => {
+    if (!url) return { ok: false, error: '地址为空' };
+    const cleanUrl = url.replace(/\/$/, '');
+    try {
+      const resp = await fetch(`${cleanUrl}/health/`, { signal: AbortSignal.timeout(5000) });
+      const body = await resp.text().catch(() => '');
+      return { ok: resp.ok, status: resp.status, body: body.slice(0, 100) };
+    } catch (e) {
+      return { ok: false, error: String(e) };
+    }
   });
 }
 

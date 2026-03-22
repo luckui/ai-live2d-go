@@ -39,6 +39,19 @@ contextBridge.exposeInMainWorld('discordAPI', {
   getStatus: () => ipcRenderer.invoke('discord:status'),
 });
 
+contextBridge.exposeInMainWorld('ttsAPI', {
+  isEnabled: () => ipcRenderer.invoke('tts:isEnabled'),
+  speak: (text: string) => ipcRenderer.invoke('tts:speak', text),
+  debug: () => ipcRenderer.invoke('tts:debug'),
+  health: () => ipcRenderer.invoke('tts:health'),
+});
+
+contextBridge.exposeInMainWorld('ttsSettingsAPI', {
+  get:  ()             => ipcRenderer.invoke('tts:config:get'),
+  save: (cfg: unknown) => ipcRenderer.invoke('tts:config:save', cfg),
+  test: (url: string)  => ipcRenderer.invoke('tts:config:test', url),
+});
+
 /** 应用退出相关事件 */
 contextBridge.exposeInMainWorld('appLifecycleAPI', {
   /** 开始退出流水线时触发（正在保存记忆） */

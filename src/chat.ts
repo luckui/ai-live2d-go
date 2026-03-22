@@ -2,6 +2,10 @@
 // 类型声明
 // =====================================================
 
+import { playTTS } from './ttsPlayer';
+
+console.log('[Chat] module loaded ✅ (带TTS版本)');
+
 interface Conversation {
   id: string;
   title: string;
@@ -47,6 +51,10 @@ declare global {
         ok: boolean;
         durationMs: number;
       }) => void): void;
+    };
+    ttsAPI?: {
+      isEnabled(): Promise<boolean>;
+      speak(text: string): Promise<{ data: string } | null>;
     };
   }
 }
@@ -235,6 +243,9 @@ async function sendMessage(): Promise<void> {
     const result = await window.chatAPI!.send(currentConversationId, text);
     typing?.remove();
     addMessage('ai', result.content, true, result.created_at);
+    // TTS 播放（未启用时静默跳过）
+    console.log('[Chat] 准备调用 playTTS, 文本长度:', result.content.length);
+    playTTS(result.content).catch((e) => console.error('[TTS] playTTS 抛出异常:', e));
     // 首轮发送后 AI 服务会自动重命名对话，刷新 header 标题
     await refreshConvTitle(currentConversationId);
   } catch (e) {

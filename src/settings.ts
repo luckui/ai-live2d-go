@@ -29,6 +29,14 @@ interface DiscordConfig {
   proxyUrl: string;
 }
 
+interface TTSConfig {
+  enabled: boolean;
+  url: string;
+  apiKey: string;
+  speaker: string;
+  language: string;
+}
+
 declare global {
   interface Window {
     settingsAPI?: {
@@ -39,6 +47,11 @@ declare global {
       get(): Promise<DiscordConfig>;
       save(cfg: DiscordConfig): Promise<void>;
       getStatus(): Promise<'online' | 'offline'>;
+    };
+    ttsSettingsAPI?: {
+      get(): Promise<TTSConfig>;
+      save(cfg: TTSConfig): Promise<void>;
+      test(url: string): Promise<{ ok: boolean; status?: number; body?: string; error?: string }>;
     };
   }
 }
@@ -140,8 +153,6 @@ async function loadSettingsUI(): Promise<void> {
   renderForm();
 }
 
-// ── Discord UI ────────────────────────────────────────
-
 async function loadDiscordUI(): Promise<void> {
   if (!window.discordAPI) return;
   const dc = await window.discordAPI.get();
@@ -191,7 +202,72 @@ async function saveDiscordSettings(): Promise<void> {
   }
 }
 
-// ── 保存 ──────────────────────────────────────────────
+// ── TTS UI ────────────────────────────────────────────
+
+async function loadTTSUI(): Promise<void> {
+  if (!window.ttsSettingsAPI) return;
+  const tts = await window.ttsSettingsAPI.get();
+  (document.getElementById('tts-enabled')  as HTMLInputElement).checked  = tts.enabled;
+  (document.getElementById('tts-url')      as HTMLInputElement).value    = tts.url;
+  (document.getElementById('tts-apikey')   as HTMLInputElement).value    = tts.apiKey;
+  (document.getElementById('tts-speaker')  as HTMLInputElement).value    = tts.speaker;
+  (document.getElementById('tts-language') as HTMLSelectElement).value   = tts.language;
+}
+
+async function saveTTSSettings(): Promise<void> {
+  if (!window.ttsSettingsAPI) return;
+  const ttsCfg: TTSConfig = {
+    enabled:  (document.getElementById('tts-enabled')  as HTMLInputElement).checked,
+    url:      (document.getElementById('tts-url')      as HTMLInputElement).value.trim(),
+    apiKey:   (document.getElementById('tts-apikey')   as HTMLInputElement).value.trim(),
+    speaker:  (document.getElementById('tts-speaker')  as HTMLInputElement).value.trim(),
+    language: (document.getElementById('tts-language') as HTMLSelectElement).value,
+  };
+  const btn = document.getElementById('tts-save-btn') as HTMLButtonElement;
+  btn.textContent = '保存中…';
+  btn.disabled = true;
+  try {
+    await window.ttsSettingsAPI.save(ttsCfg);
+    btn.textContent = '✓ 已保存';
+    setTimeout(() => { btn.textContent = '保存设置'; btn.disabled = false; }, 1800);
+  } catch (e) {
+    btn.textContent = '保存失败';
+    setTimeout(() => { btn.textContent = '保存设置'; btn.disabled = false; }, 2000);
+    console.error('[TTS save]', e);
+  }
+}
+
+async function runTTSHealthCheck(): Promise<void> {
+  if (!window.ttsSettingsAPI) return;
+  const url  = (document.getElementById('tts-url') as HTMLInputElement).value.trim();
+  const dot  = document.getElementById('tts-status-dot')  as HTMLElement;
+  const text = document.getElementById('tts-status-text') as HTMLElement;
+  const btn  = document.getElementById('tts-test-btn')    as HTMLButtonElement;
+
+  btn.disabled = true;
+  btn.textContent = '测试中…';
+  dot.className = 's-status-dot s-status-off';
+  text.textContent = '连接中…';
+
+  try {
+    const result = await window.ttsSettingsAPI.test(url);
+    if (result.ok) {
+      dot.className = 's-status-dot s-status-on';
+      text.textContent = `✓ 连接成功（HTTP ${result.status}）`;
+    } else {
+      dot.className = 's-status-dot s-status-err';
+      text.textContent = result.error ?? `✗ HTTP ${result.status}`;
+    }
+  } catch (e) {
+    dot.className = 's-status-dot s-status-err';
+    text.textContent = `✗ ${String(e)}`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '🔍 测试连接';
+  }
+}
+
+// ── 保存（LLM） ────────────────────────────────────────
 
 async function saveSettings(): Promise<void> {
   if (!cfg) return;
@@ -273,6 +349,7 @@ export function openSettings(): void {
   document.getElementById('settings-panel')?.classList.add('visible');
   void loadSettingsUI();
   void loadDiscordUI();
+  void loadTTSUI();
 }
 
 export function closeSettings(): void {
@@ -361,7 +438,16 @@ export function initSettings(): void {
     if (input.type === 'password') { input.type = 'text';     btn.textContent = '🙈'; }
     else                           { input.type = 'password'; btn.textContent = '👁'; }
   });
+  // ── TTS 表单事件 ─────────────────────────────────────
+  document.getElementById('tts-save-btn')?.addEventListener('click', () => void saveTTSSettings());
+  document.getElementById('tts-test-btn')?.addEventListener('click', () => void runTTSHealthCheck());
 
+  document.getElementById('tts-eye-btn')?.addEventListener('click', () => {
+    const input = document.getElementById('tts-apikey') as HTMLInputElement;
+    const btn   = document.getElementById('tts-eye-btn') as HTMLButtonElement;
+    if (input.type === 'password') { input.type = 'text';     btn.textContent = '\uD83D\uDE48'; }
+    else                           { input.type = 'password'; btn.textContent = '\uD83D\uDC41'; }
+  });
   // 防止面板内所有输入触发窗口拖动
   document.querySelectorAll('#settings-panel input, #settings-panel textarea').forEach((el) => {
     el.addEventListener('mousedown', (e) => e.stopPropagation());
