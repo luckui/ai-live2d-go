@@ -16,8 +16,12 @@
     "copyright": "Copyright © 2026",
     "directories": {
       "output": "dist"
-    },
-    "files": [
+    },    "extraResources": [
+      {
+        "from": ".env",
+        "to": ".env.defaults"
+      }
+    ],    "files": [
       "out/**/*",
       "public/**/*"
     ],

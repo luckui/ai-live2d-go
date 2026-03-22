@@ -48,7 +48,7 @@ contextBridge.exposeInMainWorld('ttsAPI', {
 
 contextBridge.exposeInMainWorld('ttsSettingsAPI', {
   get:  ()             => ipcRenderer.invoke('tts:config:get'),
-  save: (cfg: unknown) => ipcRenderer.invoke('tts:config:save', cfg),
+  save: (cfg: unknown) => ipcRenderer.invoke('tts:config:save', cfg) as Promise<{ isEnabled: boolean; fileSaved: boolean; debug: Record<string, unknown> }>,
   test: (url: string)  => ipcRenderer.invoke('tts:config:test', url),
 });
 

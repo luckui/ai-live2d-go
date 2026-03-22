@@ -50,7 +50,7 @@ declare global {
     };
     ttsSettingsAPI?: {
       get(): Promise<TTSConfig>;
-      save(cfg: TTSConfig): Promise<void>;
+      save(cfg: TTSConfig): Promise<{ isEnabled: boolean; fileSaved: boolean; debug: Record<string, unknown> }>;
       test(url: string): Promise<{ ok: boolean; status?: number; body?: string; error?: string }>;
     };
   }
@@ -204,6 +204,24 @@ async function saveDiscordSettings(): Promise<void> {
 
 // ── TTS UI ────────────────────────────────────────────
 
+async function refreshTTSRuntimeStatus(): Promise<void> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const ttsAPI = (window as any).ttsAPI as { isEnabled(): Promise<boolean> } | undefined;
+  const dot  = document.getElementById('tts-runtime-dot')  as HTMLElement | null;
+  const text = document.getElementById('tts-runtime-text') as HTMLElement | null;
+  if (!dot || !text) return;
+  try {
+    const enabled = ttsAPI ? await ttsAPI.isEnabled() : false;
+    dot.className   = `s-status-dot ${enabled ? 's-status-on' : 's-status-err'}`;
+    text.textContent = enabled
+      ? '\u2713 \u5df2\u542f\u7528\uff08\u8bed\u97f3\u5c06\u5728\u56de\u590d\u540e\u81ea\u52a8\u64ad\u653e\uff09'
+      : '\u26a0\ufe0f \u672a\u542f\u7528\uff08\u8bf7\u586b\u5199\u8868\u5355\u5e76\u70b9\u201c\u4fdd\u5b58\u8bbe\u7f6e\u201d\uff09';
+  } catch {
+    dot.className   = 's-status-dot s-status-off';
+    text.textContent = '\u65e0\u6cd5\u83b7\u53d6\u72b6\u6001';
+  }
+}
+
 async function loadTTSUI(): Promise<void> {
   if (!window.ttsSettingsAPI) return;
   const tts = await window.ttsSettingsAPI.get();
@@ -212,6 +230,7 @@ async function loadTTSUI(): Promise<void> {
   (document.getElementById('tts-apikey')   as HTMLInputElement).value    = tts.apiKey;
   (document.getElementById('tts-speaker')  as HTMLInputElement).value    = tts.speaker;
   (document.getElementById('tts-language') as HTMLSelectElement).value   = tts.language;
+  void refreshTTSRuntimeStatus();
 }
 
 async function saveTTSSettings(): Promise<void> {
@@ -229,6 +248,7 @@ async function saveTTSSettings(): Promise<void> {
   try {
     await window.ttsSettingsAPI.save(ttsCfg);
     btn.textContent = '✓ 已保存';
+    void refreshTTSRuntimeStatus(); // 刷新运行时状态确认生效
     setTimeout(() => { btn.textContent = '保存设置'; btn.disabled = false; }, 1800);
   } catch (e) {
     btn.textContent = '保存失败';

@@ -1,9 +1,78 @@
 /// <reference types="node" />
 // 必须在所有 import 之前加载，这样 ai.config.ts 里的 process.env 才能取到局部 .env 的实际内容
 import * as dotenv from 'dotenv';
-dotenv.config(); // 生产环境文件不存在时静默失败，用户通过 UI 配置
 import { app, BrowserWindow, ipcMain, screen } from 'electron';
 import { join } from 'path';
+
+/**
+ * 持久化 .env 文件路径：
+ *   dev  → 项目根目录（便于直接编辑）
+ *   打包 → app.getPath('userData')（系统用户数据目录，跨版本升级不丢失）
+ *          Windows: %AppData%\<AppName>\.env
+ */
+function getEnvFilePath(): string {
+  return app.isPackaged
+    ? join(app.getPath('userData'), '.env')
+    : join(app.getAppPath(), '.env');
+}
+
+/**
+ * 启动时环境变量合并：
+ *   1. 优先读取 userData/.env（用户自定义值）
+ *   2. 对 userData/.env 里缺失的键，从 resources/.env.defaults（打包时的项目 .env）补充
+ *   这样升级后新增的配置项能自动填入默认值，同时不覆盖用户已有配置。
+ */
+function migrateEnvFile(): void {
+  if (!app.isPackaged) return;
+  const fs = require('fs') as typeof import('fs');
+  const userDataEnv  = getEnvFilePath();
+  const defaultsPath = join(process.resourcesPath, '.env.defaults');
+
+  // 读取默认值（打包时的 .env）
+  let defaults: Record<string, string> = {};
+  if (fs.existsSync(defaultsPath)) {
+    try {
+      const raw = fs.readFileSync(defaultsPath, 'utf-8');
+      for (const line of raw.split('\n')) {
+        const m = line.match(/^([^#=\s][^=]*)=(.*)$/);
+        if (m) defaults[m[1].trim()] = m[2].trim();
+      }
+    } catch { /* 读取失败忽略 */ }
+  }
+
+  // 读取用户配置（可能不存在）
+  let userLines: string[] = [];
+  let userKeys  = new Set<string>();
+  if (fs.existsSync(userDataEnv)) {
+    try {
+      userLines = fs.readFileSync(userDataEnv, 'utf-8').split('\n');
+      for (const line of userLines) {
+        const m = line.match(/^([^#=\s][^=]*)=/);
+        if (m) userKeys.add(m[1].trim());
+      }
+    } catch { /* 读取失败从空开始 */ }
+  }
+
+  // 把 defaults 里有但 userData/.env 里缺的键追加进去
+  const missing = Object.entries(defaults).filter(([k]) => !userKeys.has(k));
+  if (missing.length > 0 || userLines.length === 0) {
+    for (const [k, v] of missing) userLines.push(`${k}=${v}`);
+    try {
+      fs.mkdirSync(app.getPath('userData'), { recursive: true });
+      fs.writeFileSync(userDataEnv, userLines.filter(l => l !== '').join('\n') + '\n', 'utf-8');
+      if (missing.length > 0) {
+        console.info(`[Config] 补充了 ${missing.length} 个缺失配置项:`, missing.map(([k]) => k).join(', '));
+      }
+    } catch (e) {
+      console.warn('[Config] 写入 userData/.env 失败:', (e as Error).message);
+    }
+  }
+}
+
+// 迁移后再加载（迁移必须在 dotenv.config 之前）
+migrateEnvFile();
+// 启动时从正确路径加载 .env
+dotenv.config({ path: getEnvFilePath() });
 import {
   initDatabase,
   createConversation,
@@ -214,30 +283,29 @@ function createWindow(): void {
   ipcMain.handle('discord:save', async (_e, cfg: {
     enabled: boolean; token: string; allowedChannels: string; proxyUrl: string;
   }) => {
-    // 写入 .env 文件（项目根目录）
-    const fs = require('fs') as typeof import('fs');
-    const envPath = app.isPackaged
-      ? join(process.resourcesPath, '.env')
-      : join(app.getAppPath(), '.env');
-
-    // 读取现有 .env，更新 DISCORD_* 字段
-    let envContent = '';
-    try { envContent = fs.readFileSync(envPath, 'utf-8'); } catch { /* 文件不存在时从空白开始 */ }
-
-    const lines = envContent.split('\n').filter(l => !/^DISCORD_/.test(l.trim()));
-    lines.push(`DISCORD_ENABLED=${cfg.enabled}`);
-    lines.push(`DISCORD_TOKEN=${cfg.token}`);
-    lines.push(`DISCORD_ALLOWED_CHANNELS=${cfg.allowedChannels}`);
-    lines.push(`DISCORD_PROXY=${cfg.proxyUrl}`);
-    fs.writeFileSync(envPath, lines.join('\n'), 'utf-8');
-
-    // 同步更新 process.env，让下次 loadBridgeConfig() 读到最新值
-    process.env['DISCORD_ENABLED'] = String(cfg.enabled);
-    process.env['DISCORD_TOKEN'] = cfg.token;
+    // ① 先更新内存 env（当前会话立即生效，与文件写入无关）
+    process.env['DISCORD_ENABLED']          = String(cfg.enabled);
+    process.env['DISCORD_TOKEN']            = cfg.token;
     process.env['DISCORD_ALLOWED_CHANNELS'] = cfg.allowedChannels;
-    process.env['DISCORD_PROXY'] = cfg.proxyUrl;
+    process.env['DISCORD_PROXY']            = cfg.proxyUrl;
 
-    // 重启 bridges
+    // ② 再持久化到 .env 文件（失败只影响下次重启，不影响当前会话）
+    try {
+      const fs = require('fs') as typeof import('fs');
+      const envPath = getEnvFilePath();
+      let envContent = '';
+      try { envContent = fs.readFileSync(envPath, 'utf-8'); } catch { }
+      const lines = envContent.split('\n').filter(l => !/^DISCORD_/.test(l.trim()));
+      lines.push(`DISCORD_ENABLED=${cfg.enabled}`);
+      lines.push(`DISCORD_TOKEN=${cfg.token}`);
+      lines.push(`DISCORD_ALLOWED_CHANNELS=${cfg.allowedChannels}`);
+      lines.push(`DISCORD_PROXY=${cfg.proxyUrl}`);
+      fs.writeFileSync(envPath, lines.join('\n'), 'utf-8');
+    } catch (e) {
+      console.warn('[Discord config] 写入 .env 失败（仅影响持久化）:', (e as Error).message);
+    }
+
+    // ③ 重启 bridges
     await stopBridges();
     const convs = listConversations();
     const convId = convs.length > 0 ? convs[0].id : createConversation().id;
@@ -275,29 +343,45 @@ function createWindow(): void {
   ipcMain.handle('tts:config:save', async (_e, newCfg: {
     enabled: boolean; url: string; apiKey: string; speaker: string; language: string;
   }) => {
-    const fs = require('fs') as typeof import('fs');
-    const envPath = app.isPackaged
-      ? join(process.resourcesPath, '.env')
-      : join(app.getAppPath(), '.env');
-
-    let envContent = '';
-    try { envContent = fs.readFileSync(envPath, 'utf-8'); } catch { /* 文件不存在时从空白开始 */ }
-
-    const lines = envContent.split('\n').filter(l => !/^TTS_/.test(l.trim()));
-    lines.push(`TTS_ENABLED=${newCfg.enabled}`);
-    lines.push(`TTS_URL=${newCfg.url}`);
-    lines.push(`TTS_API_KEY=${newCfg.apiKey}`);
-    lines.push(`TTS_SPEAKER=${newCfg.speaker}`);
-    lines.push(`TTS_LANGUAGE=${newCfg.language}`);
-    fs.writeFileSync(envPath, lines.join('\n'), 'utf-8');
-
+    // ① 先更新内存 env + 重置服务（当前会话立即生效）
     process.env['TTS_ENABLED']  = String(newCfg.enabled);
     process.env['TTS_URL']      = newCfg.url;
     process.env['TTS_API_KEY']  = newCfg.apiKey;
     process.env['TTS_SPEAKER']  = newCfg.speaker;
     process.env['TTS_LANGUAGE'] = newCfg.language;
+    ttsService.reset();
 
-    ttsService.reset(); // 下次调用 speak() 时重新初始化
+    // ② 评断当前是否已有效（reset 后重新初始化）
+    const nowEnabled = ttsService.isEnabled;
+    const debug = {
+      TTS_ENABLED:  process.env['TTS_ENABLED'],
+      TTS_URL:      process.env['TTS_URL'] ? '(set)' : '(empty)',
+      TTS_SPEAKER:  process.env['TTS_SPEAKER'] ? '(set)' : '(empty)',
+      TTS_API_KEY:  process.env['TTS_API_KEY'] ? '(set)' : '(empty)',
+      isEnabled:    nowEnabled,
+    };
+    console.info('[TTS config:save] 保存后状态:', debug);
+
+    // ③ 再持久化到 .env 文件（失败只影响下次重启，不影响当前会话）
+    let fileSaved = false;
+    try {
+      const fs = require('fs') as typeof import('fs');
+      const envPath = getEnvFilePath();
+      let envContent = '';
+      try { envContent = fs.readFileSync(envPath, 'utf-8'); } catch { }
+      const lines = envContent.split('\n').filter(l => !/^TTS_/.test(l.trim()));
+      lines.push(`TTS_ENABLED=${newCfg.enabled}`);
+      lines.push(`TTS_URL=${newCfg.url}`);
+      lines.push(`TTS_API_KEY=${newCfg.apiKey}`);
+      lines.push(`TTS_SPEAKER=${newCfg.speaker}`);
+      lines.push(`TTS_LANGUAGE=${newCfg.language}`);
+      fs.writeFileSync(envPath, lines.join('\n'), 'utf-8');
+      fileSaved = true;
+    } catch (e) {
+      console.warn('[TTS config] 写入 .env 失败（仅影响持久化）:', (e as Error).message);
+    }
+
+    return { isEnabled: nowEnabled, fileSaved, debug };
   });
 
   ipcMain.handle('tts:config:test', async (_e, url: string) => {
