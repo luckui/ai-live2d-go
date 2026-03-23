@@ -20,6 +20,10 @@
       {
         "from": ".env",
         "to": ".env.defaults"
+      },
+      {
+        "from": "electron/manual",
+        "to": "electron/manual"
       }
     ],    "files": [
       "out/**/*",

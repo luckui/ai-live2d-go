@@ -4,6 +4,7 @@
  * 职责：
  *   1. 调用 Electron IPC（ttsAPI.speak）获取 base64 WAV 音频
  *   2. 解码后交给 LAppModel._wavFileHandler.startFromBuffer() 播放 + 口型同步
+ *   3. 按句子切分文本，并发发起所有请求，顺序播放——流水线策略降低感知延迟
  *
  * 用法：收到 AI 回复文本后调用 playTTS(text)
  */
@@ -44,6 +45,50 @@ function cleanForTTS(text: string): string {
     .trim();
 }
 
+// ── 句子切分 ─────────────────────────────────────────────────────
+
+/** 单次并发请求上限，避免短文本产生过多分片 */
+const MAX_SEGMENTS = 8;
+
+/**
+ * 按句末标点（。！？!?…）切分句子，保留标点在句尾。
+ * 过短的碎片会合并到下一段，切分结果不超过 MAX_SEGMENTS 条。
+ */
+function splitSentences(text: string): string[] {
+  const raw = text.split(/(?<=[。！？!?…]+\s*)/);
+  const result: string[] = [];
+  let buffer = '';
+  for (const part of raw) {
+    buffer += part;
+    // 积累到至少 6 个字符才独立成句，避免切出过短碎片
+    if (buffer.trim().length >= 6) {
+      result.push(buffer.trim());
+      buffer = '';
+    }
+  }
+  if (buffer.trim()) result.push(buffer.trim());
+
+  // 超出上限时，把尾部多余项合并成一句
+  if (result.length > MAX_SEGMENTS) {
+    const merged = [...result.slice(0, MAX_SEGMENTS - 1), result.slice(MAX_SEGMENTS - 1).join('')];
+    return merged;
+  }
+  return result.filter(s => s.length > 0);
+}
+
+// ── base64 → ArrayBuffer ─────────────────────────────────────────
+
+function base64ToBuffer(b64: string): ArrayBuffer {
+  const binary = atob(b64);
+  const bytes  = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes.buffer;
+}
+
+// ── 播放世代：新调用时取消上一次未完成的队列 ──────────────────────
+
+let _playGeneration = 0;
+
 // ── 主入口 ───────────────────────────────────────────────────────
 
 type TtsAPI = {
@@ -64,41 +109,57 @@ export async function playTTS(text: string): Promise<void> {
     console.warn('[TTS] 跳过：清洗后文本为空');
     return;
   }
-  console.log('[TTS] 开始合成：', cleaned.slice(0, 60));
 
-  let result: { data: string } | null;
-  try {
-    result = await ttsAPI.speak(cleaned);
-  } catch (e) {
-    console.warn('[TTS] speak IPC 调用异常:', e);
-    return;
-  }
-  if (!result?.data) {
-    console.warn('[TTS] speak 返回为 null（TTS 未启用或服务异常）');
-    return;
-  }
-  console.log('[TTS] 收到 base64 WAV，大小：', result.data.length, 'chars');
+  // 递增世代，取消上一次未完成的播放队列；同时停止正在播放的音频
+  const gen = ++_playGeneration;
+  getLiveModel()?._wavFileHandler.stop();
 
-  // base64 → ArrayBuffer
-  let buffer: ArrayBuffer;
-  try {
-    const binary = atob(result.data);
-    const bytes  = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-    buffer = bytes.buffer;
-    console.log('[TTS] 解码成功，字节数：', buffer.byteLength);
-  } catch (e) {
-    console.warn('[TTS] base64 解码失败:', e);
-    return;
+  const sentences = splitSentences(cleaned);
+  console.log(`[TTS] 切分为 ${sentences.length} 句:`, sentences);
+
+  // ① 并发发起全部句子的 TTS 请求（流水线：请求第 N 句时第 N-1 句正在播放）
+  const requests = sentences.map(s => ttsAPI.speak(s));
+
+  // ② 顺序等待并播放
+  for (let i = 0; i < requests.length; i++) {
+    if (gen !== _playGeneration) {
+      console.log('[TTS] 队列已被新请求取消，停止播放');
+      return;
+    }
+
+    let result: { data: string } | null;
+    try {
+      result = await requests[i];
+    } catch (e) {
+      console.warn(`[TTS] 第 ${i + 1} 句 speak 异常:`, e);
+      continue;
+    }
+    if (!result?.data) {
+      console.warn(`[TTS] 第 ${i + 1} 句返回 null，跳过`);
+      continue;
+    }
+
+    if (gen !== _playGeneration) return;
+
+    let buffer: ArrayBuffer;
+    try {
+      buffer = base64ToBuffer(result.data);
+    } catch (e) {
+      console.warn(`[TTS] 第 ${i + 1} 句 base64 解码失败:`, e);
+      continue;
+    }
+
+    const model = getLiveModel();
+    if (!model) {
+      console.warn('[TTS] 跳过：Live2D 模型未就绪');
+      return;
+    }
+
+    console.log(`[TTS] 第 ${i + 1}/${sentences.length} 句开始播放，字节:`, buffer.byteLength);
+    await model._wavFileHandler.startFromBuffer(buffer);
+    await model._wavFileHandler.waitUntilEnd();
+    console.log(`[TTS] 第 ${i + 1} 句播放完毕`);
   }
 
-  const model = getLiveModel();
-  if (!model) {
-    console.warn('[TTS] 跳过：Live2D 模型未就绪（音频已获取但无法播放）');
-    return;
-  }
-
-  console.log('[TTS] 开始播放，调用 startFromBuffer...');
-  await model._wavFileHandler.startFromBuffer(buffer);
-  console.log('[TTS] startFromBuffer 完成（音频已送入 AudioContext）');
+  console.log('[TTS] 全部句子播放完成');
 }

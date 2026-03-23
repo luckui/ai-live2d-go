@@ -8,12 +8,13 @@
  */
 
 export class LAppWavFileHandler {
-  private _ctx:        AudioContext           | null = null;
-  private _analyser:   AnalyserNode           | null = null;
-  private _source:     AudioBufferSourceNode  | null = null;
-  private _timeDomain: Float32Array           | null = null;
-  private _lastRms  = 0;
-  private _isPlaying = false;
+  private _ctx:          AudioContext           | null = null;
+  private _analyser:     AnalyserNode           | null = null;
+  private _source:       AudioBufferSourceNode  | null = null;
+  private _timeDomain:   Float32Array           | null = null;
+  private _lastRms     = 0;
+  private _isPlaying   = false;
+  private _endedResolve: (() => void) | null = null;
 
   constructor() {}
 
@@ -66,6 +67,8 @@ export class LAppWavFileHandler {
     this._source.onended = () => {
       this._isPlaying = false;
       this._lastRms   = 0;
+      this._endedResolve?.();
+      this._endedResolve = null;
     };
     this._source.start();
     this._isPlaying = true;
@@ -80,6 +83,19 @@ export class LAppWavFileHandler {
     this._analyser  = null;
     this._isPlaying = false;
     this._lastRms   = 0;
+    this._endedResolve?.();
+    this._endedResolve = null;
+  }
+
+  /**
+   * 等待当前句子播放完毕后 resolve。
+   * 若当前没有正在播放的音频，立即 resolve。
+   */
+  public waitUntilEnd(): Promise<void> {
+    if (!this._isPlaying || !this._source) return Promise.resolve();
+    return new Promise<void>(resolve => {
+      this._endedResolve = resolve;
+    });
   }
 
   public getRms(): number { return this._lastRms; }
