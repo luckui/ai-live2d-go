@@ -76,8 +76,8 @@ Hiyori 是一个运行在 Windows 桌面的 Live2D 宠物应用。
 
 ```bash
 # 克隆项目
-git clone https://github.com/yourusername/hiyori-desktop-pet.git
-cd hiyori-desktop-pet
+git clone https://github.com/luckui/ai-live2d-go.git
+cd ai-live2d-go
 
 # 安装依赖
 npm install
@@ -201,11 +201,11 @@ providers: {
 
 欢迎提交 Issue 和 Pull Request！
 
-请查看 [CONTRIBUTING.md](CONTRIBUTING.md) 了解详细贡献方式。
+如有任何问题或建议，请通过 [GitHub Issues](https://github.com/luckui/ai-live2d-go/issues) 提出。
 
 ### 📄 开源许可
 
-本项目采用 [MIT License](LICENSE) 开源。
+本项目采用 MIT License 开源。
 
 ### 🙏 致谢
 
@@ -215,10 +215,5 @@ providers: {
 
 ### 📮 联系方式
 
-- 提交 Issue: [GitHub Issues](https://github.com/yourusername/hiyori-desktop-pet/issues)
-- 讨论区: [GitHub Discussions](https://github.com/yourusername/hiyori-desktop-pet/discussions)
-
-## 说明
-
-- 当前仓库中的 GitHub 地址、邮箱等字段仍有占位内容，公开前建议替换为真实信息
-- 如果后续需要，我可以继续补英文版 README、Issue 模板、PR 模板和 .github 目录配置
+- 提交 Issue: [GitHub Issues](https://github.com/luckui/ai-live2d-go/issues)
+- 讨论区: [GitHub Discussions](https://github.com/luckui/ai-live2d-go/discussions)
