@@ -7,7 +7,6 @@ import { isToolImageResult } from './tools/types';
 import { memoryManager, globalMemoryManager, recordMessageActivity } from './memory/index';
 import { stripThinkTags } from './utils/textUtils';
 import { fetchCompletion } from './llmClient';
-import { runAgent } from './agent/orchestrator';
 import { getManualTopicsForPrompt } from './tools/impl/manual';
 
 // ── 工具调用调试事件 ─────────────────────────────────────
@@ -345,18 +344,10 @@ export async function sendChatMessage(
   // 3. 调用 AI（含工具调用循环）
   let replyContent: string;
   try {
-    const mode = aiConfig.agentMode ?? 'off';
-    if (mode === 'force') {
-      // 强制 Agent：用户输入直接作为目标执行（显式开关即视为用户授权）
-      replyContent = await runAgent(userContent, provider);
-    } else {
-      // 普通模式：禁用 agent_start，避免未获同意就进入 planner
-      // getSchemasForMode 会在有 Skill 时自动隐藏 sys_* 原子工具，降低 AI 选择压力
-      const normalTools = toolRegistry.isEmpty
-        ? undefined
-        : toolRegistry.getSchemasForMode().filter(s => s.function.name !== 'agent_start');
-      replyContent = await callWithToolLoop(provider, messages, normalTools);
-    }
+    // ReAct 模式：工具调用循环，走一步看一步
+    // getSchemasForMode 会在有 Skill 时自动隐藏 sys_* 原子工具，降低 AI 选择压力
+    const tools = toolRegistry.isEmpty ? undefined : toolRegistry.getSchemasForMode();
+    replyContent = await callWithToolLoop(provider, messages, tools);
   } catch (e) {
     replyContent = `（请求失败：${(e as Error).message}）`;
   }

@@ -32,7 +32,6 @@ export const TOOL_MAPPING = `
 • 浏览器：browser_open | browser_search | browser_click_smart | browser_type_smart | browser_read_page
 • 系统操作：sys_screenshot | sys_mouse | sys_keyboard | open_terminal | run_command
 • 知识库：read_manual(topic) - 遇到不熟悉的操作或工具执行失败时查阅
-• Agent：agent_start(goal) - 多步骤复杂任务时可询问用户是否启用自动规划
 `.trim();
 
 /**

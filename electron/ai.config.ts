@@ -44,12 +44,6 @@ export interface AIConfig {
   /** 当前激活的 provider key */
   activeProvider: string;
   /**
-   * Agent 模式开关：
-   * - off:  关闭强制 Agent，普通聊天仅使用常规工具（不暴露 agent_start）
-   * - force: 每条用户消息都直接走 Agent（runAgent）
-   */
-  agentMode?: 'off' | 'force';
-  /**
    * 短期记忆窗口（轮数）。
    * 1 轮 = 1 条 user + 1 条 assistant。
    * 超出部分永久存入 SQLite，但不进入本次请求的 context。
@@ -66,7 +60,6 @@ export interface AIConfig {
 
 const aiConfig: AIConfig = {
   activeProvider: 'doubao',
-  agentMode: 'off',
   contextWindowRounds: 6,
   providers: {
     doubao: {

@@ -20,11 +20,9 @@ import screenshotTool from './impl/screenshot';
 import { browserTools } from './impl/browser';
 import { systemTools } from './impl/system';
 import { ocrTools } from './impl/ocr';
-import agentStartTool from './impl/agentTool';
 import runCommandTool from './impl/runCommand';
 import discordSendTool from './impl/discordSend';
 import readManualTool from './impl/manual';
-import { setAgentRegistry } from '../agent/agentRegistry';
 import { skillList } from '../skills/index';
 import { setSkillRegistry } from '../skills/skillContext';
 
@@ -55,13 +53,6 @@ for (const tool of ocrTools) {
 for (const skill of skillList) {
   registry.register(skill);
 }
-
-// 注册 Agent 启动工具（必须在 setAgentRegistry 之前完成）
-registry.register(agentStartTool);
-
-// 初始化 Agent 模块的工具注册表引用（打破 agent/executor ↔ tools/index 的循环依赖）
-// 此时 registry 已包含所有工具，getAgentRegistry() 从此可用
-setAgentRegistry(registry);
 
 // 初始化 Skill 模块的工具注册表引用（打破 skills/impl/* ↔ tools/index 的循环依赖）
 // 此时 registry 已包含所有原子工具，Skill 的 execute() 可通过 getSkillRegistry() 调用它们
