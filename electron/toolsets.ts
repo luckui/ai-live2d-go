@@ -35,184 +35,195 @@ export interface ToolsetDefinition {
 /**
  * 所有工具集定义
  *
- * 分层策略：
- *   - primitive: 原子工具（底层实现，通常不直接暴露给 AI）
- *   - smart: 智能 Skill（高级封装，AI 优先调用）
- *   - full: 完整工具集（调试时使用）
+ * 扁平化分层策略：
+ *   - core: 核心功能（打开/读取/截图）
+ *   - smart: 智能交互 Skills（点击/输入）
+ *   - nav: 导航辅助（后退/刷新/搜索）
+ *
+ * ⚠️ 底层原子工具（browser_click, browser_type, sys_mouse_click 等）
+ *    永不暴露给 AI，仅供 Skills 内部使用。
  */
 export const TOOLSETS: Record<string, ToolsetDefinition> = {
   // ═════════════════════════════════════════════════════════════
-  // 浏览器工具集
+  // 浏览器工具集（扁平化）
   // ═════════════════════════════════════════════════════════════
 
-  "browser-primitive": {
-    description: "浏览器底层原子工具（Skill 内部使用）",
+  "browser-core": {
+    description: "浏览器核心工具（打开/读取/截图）",
     tools: [
-      "browser_click",           // 直接点击（需要 selector）
-      "browser_type",            // 直接输入（需要 selector）
-      "browser_js_click",        // JS 点击（需要 selector）
-      "browser_get_buttons",     // 扫描按钮列表
-      "browser_scan_inputs",     // 扫描输入框
-      "browser_js_type",         // JS 输入（需要 selector）
-      "browser_select",          // 下拉选择（需要 selector）
+      "browser_open",            // 智能导航（Skill：合并 open/search 逻辑）
+      "browser_read_page",       // 读取页面内容（页面摘要 + 可交互元素）
+      "browser_screenshot",      // 截图（保存到文件）
     ],
   },
 
   "browser-smart": {
-    description: "浏览器智能工具（AI 直接调用，推荐）",
+    description: "浏览器智能交互 Skills（点击/输入）",
     tools: [
-      "browser_open",            // 智能导航（Skill：合并 open/search 逻辑）
-      "browser_search",          // 搜索引擎（打开搜索引擎搜索关键词）
       "browser_click_smart",     // 智能点击（Skill：两阶段 扫描→确认）
       "browser_type_smart",      // 智能输入（Skill：定位输入框→填充）
-      "browser_read_page",       // 读取页面内容（页面摘要 + 可交互元素）
+    ],
+  },
+
+  "browser-nav": {
+    description: "浏览器导航辅助（后退/刷新/搜索）",
+    tools: [
       "browser_back",            // 后退
-      "browser_forward",         // 前进
       "browser_refresh",         // 刷新
-      "browser_screenshot",      // 截图（保存到文件）
-      "browser_close",           // 关闭浏览器
-    ],
-  },
-
-  "browser-full": {
-    description: "浏览器完整工具集（调试时使用）",
-    tools: [],
-    includes: ["browser-primitive", "browser-smart"],
-  },
-
-  // ═════════════════════════════════════════════════════════════
-  // 文件系统工具集
-  // ═════════════════════════════════════════════════════════════
-
-  "file-primitive": {
-    description: "文件底层原子工具",
-    tools: [
-      "read_file",               // 读取文件
-      "list_dir",                // 列出目录
-      "file_exists",             // 检查文件是否存在
-    ],
-  },
-
-  "file-smart": {
-    description: "文件智能工具（包含高级 Skill）",
-    tools: [
-      "write_file",              // 写入文件（Skill：智能创建目录）
-    ],
-    includes: ["file-primitive"],
-  },
-
-  // ═════════════════════════════════════════════════════════════
-  // 终端工具集
-  // ═════════════════════════════════════════════════════════════
-
-  "terminal-primitive": {
-    description: "终端底层工具",
-    tools: [
-      "run_command",             // 执行命令（返回输出）
-    ],
-  },
-
-  "terminal-smart": {
-    description: "终端智能工具",
-    tools: [
-      "open_terminal",           // 打开终端（Skill：智能 conda 环境）
-      "check_python_env",        // 检查 Python 环境（Skill）
-    ],
-    includes: ["terminal-primitive"],
-  },
-
-  // ═════════════════════════════════════════════════════════════
-  // Discord 工具集
-  // ═════════════════════════════════════════════════════════════
-
-  "discord-primitive": {
-    description: "Discord 底层工具",
-    tools: [
-      "discord_send",            // 发送文本消息
-    ],
-  },
-
-  "discord-smart": {
-    description: "Discord 智能工具",
-    tools: [
-      "discord_send_file",       // 发送文件（Skill：智能路径解析）
-    ],
-    includes: ["discord-primitive"],
-  },
-
-  // ═════════════════════════════════════════════════════════════
-  // 系统管理工具
-  // ═════════════════════════════════════════════════════════════
-
-  "system": {
-    description: "系统管理工具（内部使用）",
-    tools: [
-      "sys_send_notification",   // 发送系统通知
-      "sys_set_live2d_text",     // 设置 Live2D 文字
-      "sys_set_live2d_expression", // 设置 Live2D 表情
-      "sys_quit",                // 退出应用
-      "sys_restart",             // 重启应用
-      "sys_minimize",            // 最小化窗口
-      "sys_toggle_pinned",       // 切换窗口置顶
+      "browser_search",          // 搜索引擎
     ],
   },
 
   // ═════════════════════════════════════════════════════════════
-  // OCR 工具
+  // 其他工具集（扁平化）
   // ═════════════════════════════════════════════════════════════
 
   "ocr": {
     description: "OCR 文字识别工具",
     tools: [
-      "ocr_screenshot",          // 截图识别
-      "ocr_clipboard",           // 剪贴板图片识别
+      "sys_find_text",           // OCR 查找文字
+      "sys_find_text_click",     // OCR 查找并点击
+    ],
+  },
+
+  "basic-tools": {
+    description: "基础工具（计算器/时间/截图）",
+    tools: [
+      "calculate",               // 计算器
+      "get_current_datetime",    // 获取当前时间
+      "take_screenshot",         // 截图（屏幕）
     ],
   },
 
   // ═════════════════════════════════════════════════════════════
-  // 知识库工具
+  // 平台特定 Toolset（根据消息来源动态注入）
   // ═════════════════════════════════════════════════════════════
 
-  "knowledge": {
-    description: "知识库和手册工具",
+  "discord": {
+    description: "Discord 平台专属工具（当消息来自 Discord 时自动注入）",
     tools: [
-      "read_manual",             // 读取操作手册
-      "manual_manage",           // 管理说明书（AI 自我进化：创建/编辑工作流）
+      "discord_send",            // Discord 发送消息/文件（原子工具）
+      "discord_send_file",       // Skill: Discord 智能发送文件
+    ],
+  },
+
+  "wechat": {
+    description: "WeChat 平台专属工具（当消息来自 WeChat 时自动注入）",
+    tools: [
+      "wechat_send",             // 🆕 微信发送消息/文件（支持 AES-128-ECB 加密）
+      "wechat_send_file",        // 🆕 Skill: 微信智能发送文件（搜索 + 截图）
     ],
   },
 
   // ═════════════════════════════════════════════════════════════
-  // 场景组合工具集
+  // 三级模式：Chat / Agent / Agent-Debug（扁平化，易读）
   // ═════════════════════════════════════════════════════════════
 
-  "default": {
-    description: "默认工具集（桌面助手标准配置）",
+  "chat": {
+    description: "Chat 模式 - 轻量对话助手",
     tools: [
+      // 核心能力
       "memory",                  // 全局核心记忆（AI 主动管理用户画像）
       "todo",                    // 任务管理（会话级任务追踪）
-    ],
-    includes: [
-      "browser-smart",           // 浏览器智能工具
-      "file-smart",              // 文件智能工具
-      "terminal-smart",          // 终端智能工具
-      "discord-smart",           // Discord 智能工具
-      "system",                  // 系统管理
-      "ocr",                     // OCR
-      "knowledge",               // 知识库
+      "read_manual",             // 读取操作手册
+      "run_command",             // ⭐ 核心：执行命令
+      // "request_agent_mode",      // 🆕 请求升级到 Agent 模式
+      "show_available_tools",    // 🆕 显示可用工具列表
+      "switch_agent_mode",       // 🆕 切换 Agent 模式
+      
+      // 浏览器 - 核心3工具 + 智能交互
+      "browser_open",            // 打开网页（Skill）
+      "browser_read_page",       // 读取页面内容
+      "browser_screenshot",      // 截图
+      "browser_click_smart",     // 🆕 智能点击（Skill）
+      "browser_type_smart",      // 🆕 智能输入（Skill）
+      
+      // 基础工具
+      "calculate",               // 计算器
+      "get_current_datetime",    // 获取当前时间
+      "take_screenshot",         // 截图（屏幕）
     ],
   },
 
-  "debugging": {
-    description: "调试模式（暴露所有底层工具）",
-    tools: [],
-    includes: [
-      "browser-full",
-      "file-smart",
-      "terminal-smart",
-      "discord-smart",
-      "system",
-      "ocr",
-      "knowledge",
+  "agent": {
+    description: "Agent 模式 - 全功能自动化助手",
+    tools: [
+      // 核心能力
+      "memory",                  // 全局核心记忆
+      "todo",                    // 任务管理
+      "read_manual",             // 读取操作手册
+      "manual_manage",           // 编辑说明书（Agent 权限）
+      "run_command",             // ⭐ 执行命令
+      "show_available_tools",    // 显示可用工具列表
+      "switch_agent_mode",       // 🆕 切换 Agent 模式
+      
+      // 浏览器 - 完整工具集
+      "browser_open",            // 打开网页（Skill）
+      "browser_read_page",       // 读取页面内容
+      "browser_screenshot",      // 截图
+      "browser_click_smart",     // 智能点击（Skill）
+      "browser_type_smart",      // 智能输入（Skill）
+      "browser_back",            // 后退
+      "browser_refresh",         // 刷新
+      "browser_search",          // 搜索引擎
+      
+      // Skills（高级能力）
+      "open_terminal",           // Skill: 打开终端
+      "write_file",              // Skill: 写入文件
+      "check_python_env",        // Skill: 检查 Python 环境
+      
+      // OCR 工具
+      "sys_find_text",           // OCR 查找文字
+      "sys_find_text_click",     // OCR 查找并点击
+      
+      // 基础工具
+      "calculate",               // 计算器
+      "get_current_datetime",    // 获取当前时间
+      "take_screenshot",         // 截图（屏幕）
+    ],
+  },
+
+  "agent-debug": {
+    description: "Agent 调试模式 - 开发者专用（同 Agent，但暴露系统底层工具）",
+    tools: [
+      // 核心能力
+      "memory",
+      "todo",
+      "read_manual",
+      "manual_manage",
+      "run_command",
+      "show_available_tools",
+      
+      // 浏览器 - 完整工具集
+      "browser_open",
+      "browser_read_page",
+      "browser_screenshot",
+      "browser_click_smart",
+      "browser_type_smart",
+      "browser_back",
+      "browser_refresh",
+      "browser_search",
+      
+      // Skills
+      "open_terminal",
+      "write_file",
+      "check_python_env",
+      
+      // OCR 工具
+      "sys_find_text",
+      "sys_find_text_click",
+      
+      // 系统底层工具（⚠️ 调试用，生产环境不要开启）
+      "sys_key_press",           // 键盘按键
+      "sys_key_type",            // 键盘输入
+      "sys_mouse_click",         // 鼠标点击
+      "sys_mouse_move",          // 鼠标移动
+      "sys_wait",                // 等待
+      
+      // 基础工具
+      "calculate",
+      "get_current_datetime",
+      "take_screenshot",
     ],
   },
 };

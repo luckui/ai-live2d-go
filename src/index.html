@@ -36,7 +36,10 @@
           </div>
           <div class="chat-header-right no-drag">
             <button id="sessions-btn" class="ctrl-btn" title="历史对话">☰</button>
-            <button id="new-chat-btn" class="ctrl-btn" title="新建对话">✏</button>
+            <!-- Agent 模式切换器 -->
+            <button id="agent-mode-btn" class="ctrl-btn agent-mode-btn" title="切换 Chat/Agent 模式">
+              <span id="agent-mode-text">Agent</span>
+            </button>
             <button id="settings-btn" class="ctrl-btn" title="LLM 设置">⚙</button>
             <button id="toggle-chat-btn" class="ctrl-btn" title="折叠/展开聊天">
               <span id="toggle-icon">▾</span>
@@ -82,7 +85,7 @@
 
       </div><!-- /#chat-panel -->
 
-            <!-- ===== 设置面板（从右滑入，全屏覆盖） ===== -->
+      <!-- ===== 设置面板（从右滑入，全屏覆盖） ===== -->
       <div id="settings-panel">
 
         <div id="settings-hdr" class="drag-region">

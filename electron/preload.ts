@@ -57,6 +57,16 @@ contextBridge.exposeInMainWorld('memoryAPI', {
   import: () => ipcRenderer.invoke('memory:import'),
 });
 
+contextBridge.exposeInMainWorld('agentAPI', {
+  /** 设置 Agent 模式（chat / agent / agent-debug） */
+  setMode: (mode: string) => ipcRenderer.invoke('agent:set-mode', mode),
+  /** 获取当前模式 */
+  getMode: () => ipcRenderer.invoke('agent:get-mode'),
+  /** 监听模式切换事件 */
+  onModeChanged: (cb: (mode: string) => void) =>
+    ipcRenderer.on('agent-mode:changed', (_e, mode) => cb(mode)),
+});
+
 contextBridge.exposeInMainWorld('wechatAPI', {
   /** 获取 WeChat 配置 */
   get: () => ipcRenderer.invoke('wechat:get'),

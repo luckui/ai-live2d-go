@@ -20,6 +20,7 @@ import browserTypeSmartSkill from './impl/browserType';
 import checkPythonEnvSkill from './impl/checkPythonEnv';
 import writeFileSkill from './impl/writeFile';
 import discordSendFileSkill from './impl/discordSendFile';
+import wechatSendFileSkill from './impl/wechatSendFile';  // 🆕 微信发送文件 Skill
 import browserOpenSkill from './impl/browserOpen';
 
 // ── Skill 列表 ────────────────────────────────────────────────
@@ -31,6 +32,7 @@ const skillList: ToolDefinition<never>[] = [
   checkPythonEnvSkill as ToolDefinition<never>,
   writeFileSkill as ToolDefinition<never>,
   discordSendFileSkill as ToolDefinition<never>,
+  wechatSendFileSkill as ToolDefinition<never>,  // 🆕 注册微信发送文件 Skill
   // 未来在这里添加更多 Skill，例如：
   // weatherQuerySkill as ToolDefinition<never>,
   // checkEmailSkill   as ToolDefinition<never>,

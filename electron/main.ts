@@ -97,6 +97,7 @@ import { startBridges, stopBridges } from './bridges/index';
 import { DiscordAdapter } from './bridges/adapters/discord';
 import { WeChatAdapter, qrLogin } from './bridges/adapters/wechat';
 import { ttsService } from './ttsService';
+import { getAgentMode, setAgentMode } from './agentMode';
 
 // ── 实运行时加载持久化的 LLM 配置 ──────────────────────────────
 
@@ -440,6 +441,16 @@ function createWindow(): void {
       setStructuredGlobalMemory(result.content);
     }
     return result;
+  });
+
+  // ── Agent 模式管理 ────────────────────────────────────────────
+  ipcMain.handle('agent:get-mode', () => {
+    return getAgentMode();
+  });
+
+  ipcMain.handle('agent:set-mode', (_e, mode: string) => {
+    setAgentMode(mode);
+    console.log(`[IPC] Agent 模式切换为: ${mode}`);
   });
 
   ipcMain.handle('tts:isEnabled', () => ttsService.isEnabled);

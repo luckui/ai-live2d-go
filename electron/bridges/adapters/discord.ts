@@ -15,6 +15,7 @@ import {
 import { ProxyAgent } from 'undici';
 import type { DiscordBridgeConfig } from '../bridge.config';
 import { sendChatMessage } from '../../aiService';
+import { listConversations } from '../../db';  // 🆕 导入对话列表，用于自动获取最新对话
 
 const DISCORD_MAX_LEN = 1900;
 
@@ -104,8 +105,17 @@ export class DiscordAdapter {
       const content = msg.content.trim();
       if (!content) return;
 
-      const conversationId = this.cfg.conversationId;
-      if (!conversationId) { await msg.reply(' 未绑定对话 ID，请检查配置。'); return; }
+      // 🆕 自动获取对话 ID：若配置为空，使用最新对话
+      let conversationId = this.cfg.conversationId;
+      if (!conversationId) {
+        const convs = listConversations();
+        if (convs.length === 0) {
+          await msg.reply('⚠️ 系统中没有任何对话，请先在桌面创建一个对话。');
+          return;
+        }
+        conversationId = convs[0].id;  // 使用最新对话（按 updated_at DESC 排序）
+        console.log(`[Discord] 未配置对话 ID，自动使用最新对话：${conversationId}`);
+      }
 
       if ('sendTyping' in msg.channel && typeof msg.channel.sendTyping === 'function')
         (msg.channel.sendTyping as () => Promise<void>)().catch(() => {});
@@ -118,7 +128,7 @@ export class DiscordAdapter {
       } catch (e) {
         const errMsg = (e as Error).message ?? String(e);
         console.error('[Discord] 消息处理失败:', errMsg);
-        await msg.reply(` AI 响应出错：${errMsg.slice(0, 200)}`).catch(() => {});
+        await msg.reply(`❌ AI 响应出错：${errMsg.slice(0, 200)}`).catch(() => {});
       }
     });
 

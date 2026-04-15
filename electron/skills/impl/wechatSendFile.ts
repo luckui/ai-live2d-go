@@ -1,8 +1,8 @@
 /**
- * Skill: discord_send_file
+ * Skill: wechat_send_file
  *
- * 搜索本地文件并通过 Discord Bot 发送到用户所在频道。
- * 专为 Discord 会话中"把某文件发给我"场景设计，
+ * 搜索本地文件并通过微信 Bot 发送到用户。
+ * 专为微信会话中"把某文件发给我"场景设计，
  * 将"搜索→验证→发送"三步合并为一次确定性执行。
  *
  * ── 决策树 ─────────────────────────────────────────────────────
@@ -18,30 +18,30 @@
  *     └→ 未找到 → ⏸️ 提示用户提供完整路径
  *
  * ── 注意 ───────────────────────────────────────────────────────
- *   - 只应在含 [来源：Discord | ...] 标签的会话中调用
- *   - channel_id 从消息标签"频道："字段取
- *   - 附件大小超过 Discord 限制（8MB）时会报错
+ *   - 只应在含 [来源：WeChat | ...] 标签的会话中调用
+ *   - user_id 从消息标签"用户："字段取
+ *   - 微信文件通过 AES-128-ECB 加密 CDN 传输
+ *   - 支持图片、视频、文档等多种文件类型
  */
 
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { desktopCapturer, nativeImage } from 'electron';
-import { AttachmentBuilder, TextChannel } from 'discord.js';
 import type { ToolDefinition, SkillPauseResult } from '../../tools/types';
-import { DiscordAdapter } from '../../bridges/adapters/discord';
+import { WeChatAdapter } from '../../bridges/adapters/wechat';
 
-interface DiscordSendFileParams {
-  /** 目标 Discord 频道 ID（从消息标签"频道："字段取） */
-  channel_id: string;
+interface WeChatSendFileParams {
+  /** 目标微信用户 ID（从消息标签"用户："字段取） */
+  user_id: string;
   /**
    * 文件的绝对路径（已知路径时填此项，优先于 file_name）。
-   * 例：C:/Users/PC/Desktop/hello_world.py
+   * 例：C:/Users/PC/Desktop/report.pdf
    */
   file_path?: string;
   /**
    * 仅知道文件名时填此项（Skill 会自动搜索常用目录）。
-   * 例：hello_world.py
+   * 例：report.pdf
    */
   file_name?: string;
   /** 随文件一起发送的文字说明（可选） */
@@ -64,7 +64,7 @@ function getSearchDirs(): string[] {
     home,
   ];
 
-  // 🆕 去重：OneDrive 桌面同步可能让 Desktop 和 OneDrive\Desktop 指向同一物理位置
+  // 去重：OneDrive 桌面同步可能让 Desktop 和 OneDrive\Desktop 指向同一物理位置
   const seen = new Set<string>();
   const result: string[] = [];
   for (const dir of candidates) {
@@ -83,7 +83,7 @@ function getSearchDirs(): string[] {
 // 在目录列表中递归搜索文件名（最多递归 2 层，避免太慢）
 function findFiles(name: string, dirs: string[], maxDepth = 2): string[] {
   const results: string[] = [];
-  const seen = new Set<string>();  // 🆕 去重：避免符号链接导致同一文件被多次找到
+  const seen = new Set<string>();  // 去重：避免符号链接导致同一文件被多次找到
   const nameLower = name.toLowerCase();
 
   function scan(dir: string, depth: number) {
@@ -93,7 +93,7 @@ function findFiles(name: string, dirs: string[], maxDepth = 2): string[] {
     for (const entry of entries) {
       const fullPath = path.join(dir, entry.name);
       if (entry.isFile() && entry.name.toLowerCase() === nameLower) {
-        // 🆕 使用真实路径去重（处理符号链接/硬链接）
+        // 使用真实路径去重（处理符号链接/硬链接）
         try {
           const realPath = fs.realpathSync(fullPath);
           if (!seen.has(realPath)) {
@@ -117,28 +117,28 @@ function findFiles(name: string, dirs: string[], maxDepth = 2): string[] {
   return results;
 }
 
-const discordSendFileSkill: ToolDefinition<DiscordSendFileParams> = {
+const wechatSendFileSkill: ToolDefinition<WeChatSendFileParams> = {
   isSkill: true,
   schema: {
     type: 'function',
     function: {
-      name: 'discord_send_file',
+      name: 'wechat_send_file',
       description:
-        '搜索本地文件并通过 Discord Bot 发送给用户。\n' +
-        '【何时调用】Discord 会话中（消息含 [来源：Discord | ...] 标签），\n' +
+        '搜索本地文件并通过微信 Bot 发送给用户。\n' +
+        '【何时调用】微信会话中（消息含 [来源：WeChat | ...] 标签），\n' +
         '用户要求发送某个文件时（"把 XX 发给我"、"发送 XX 文件" 等）。\n' +
         '【参数选择】\n' +
         '  • 已知完整路径 → 填 file_path（直接发送，不搜索）\n' +
         '  • 只知道文件名 → 填 file_name（Skill 自动在 Desktop/Downloads/Documents 搜索）\n' +
-        '【channel_id】从消息标签"频道："字段直接取，不要猜测。\n' +
+        '【user_id】从消息标签"用户："字段直接取，不要猜测。\n' +
         '【截图发送】用户要求发送桌面截图时，填 screenshot=true，无需 file_path/file_name。\n' +
-        '【不要用的场景】无 Discord 标签的桌面聊天不要调用此 Skill。',
+        '【不要用的场景】无 WeChat 标签的桌面聊天不要调用此 Skill。',
       parameters: {
         type: 'object',
         properties: {
-          channel_id: {
+          user_id: {
             type: 'string',
-            description: '目标 Discord 频道 ID，从消息标签 [来源：Discord | 频道：xxx | ...] 中取',
+            description: '目标微信用户 ID，从消息标签 [来源：WeChat | 用户：xxx] 中取',
           },
           file_path: {
             type: 'string',
@@ -157,16 +157,16 @@ const discordSendFileSkill: ToolDefinition<DiscordSendFileParams> = {
             description: '为 true 时截取当前屏幕并发送，无需 file_path/file_name。用于"发送桌面截图"场景。',
           },
         },
-        required: ['channel_id'],
+        required: ['user_id'],
       },
     },
   },
 
-  async execute({ channel_id, file_path, file_name, message, screenshot }): Promise<string | SkillPauseResult> {
+  async execute({ user_id, file_path, file_name, message, screenshot }): Promise<string | SkillPauseResult> {
     // ── 1. 守卫：Bot 必须在线 ────────────────────────────────────
-    const client = DiscordAdapter.activeClient;
-    if (!client) {
-      return '❌ Discord Bot 当前不在线，无法发送文件。';
+    const adapter = WeChatAdapter.activeAdapter;
+    if (!adapter) {
+      return '❌ WeChat Bot 当前不在线，无法发送文件。';
     }
 
     // ── 2. 确定最终文件路径 ──────────────────────────────────────
@@ -202,7 +202,7 @@ const discordSendFileSkill: ToolDefinition<DiscordSendFileParams> = {
           __pause: true as const,
           trace: [`搜索路径：${normalized}`, '结果：文件不存在'],
           userMessage: `文件不存在：\`${normalized}\`\n请检查路径是否正确，或文件是否已被移动/删除。`,
-          resumeHint: '请用户提供正确的文件路径，然后重新调用 discord_send_file(file_path="正确路径")',
+          resumeHint: '请用户提供正确的文件路径，然后重新调用 wechat_send_file(file_path="正确路径")',
         } satisfies SkillPauseResult;
       }
       resolvedPath = normalized;
@@ -218,7 +218,7 @@ const discordSendFileSkill: ToolDefinition<DiscordSendFileParams> = {
           userMessage:
             `在常用目录（桌面、下载、文档）中未找到文件：\`${file_name}\`\n` +
             `搜索范围：\n${searchDirs.map(d => `  • ${d}`).join('\n')}`,
-          resumeHint: '请用户提供文件的完整路径，然后重新调用 discord_send_file(file_path="完整路径")',
+          resumeHint: '请用户提供文件的完整路径，然后重新调用 wechat_send_file(file_path="完整路径")',
         } satisfies SkillPauseResult;
       }
 
@@ -229,7 +229,7 @@ const discordSendFileSkill: ToolDefinition<DiscordSendFileParams> = {
           userMessage:
             `找到多个同名文件 \`${file_name}\`：\n` +
             found.map((p, i) => `  ${i + 1}. ${p}`).join('\n'),
-          resumeHint: '请用户确认要发送哪一个，然后重新调用 discord_send_file(file_path="选定路径")',
+          resumeHint: '请用户确认要发送哪一个，然后重新调用 wechat_send_file(file_path="选定路径")',
         } satisfies SkillPauseResult;
       }
 
@@ -238,46 +238,31 @@ const discordSendFileSkill: ToolDefinition<DiscordSendFileParams> = {
       return '❌ file_path 和 file_name 至少需要提供一个。';
     }
 
-    // ── 3. 获取频道 ──────────────────────────────────────────────
-    let channel;
+    // ── 3. 发送文件 ──────────────────────────────────────────────
     try {
-      channel = await client.channels.fetch(channel_id);
-    } catch (e) {
-      return `❌ 无法获取频道 ${channel_id}：${(e as Error).message}`;
-    }
-    if (!channel || !('send' in channel)) {
-      return `❌ 频道 ${channel_id} 不可发送消息。`;
-    }
+      // 先发送文字说明（如果有）
+      if (message && message.trim()) {
+        await adapter.sendText(user_id, message.trim());
+      }
 
-    // ── 4. 发送 ─────────────────────────────────────────────────
-    const attachment = new AttachmentBuilder(resolvedPath, {
-      name: path.basename(resolvedPath),
-    });
-
-    try {
-      await (channel as TextChannel).send({
-        content: message?.trim() || undefined,
-        files: [attachment],
-      });
+      // 发送文件
+      await adapter.sendFile(user_id, resolvedPath);
     } catch (e) {
       const msg = (e as Error).message ?? String(e);
-      // 常见：文件超过 8MB Discord 限制
-      if (/too large|payload|size/i.test(msg)) {
-        return `❌ 文件过大无法发送（Discord 免费服务器限制 8MB）：${path.basename(resolvedPath)}`;
-      }
       return `❌ 发送失败：${msg.slice(0, 300)}`;
-    }
-
-    // 截图临时文件用完即删
-    if (isTempFile && resolvedPath) {
-      try { fs.unlinkSync(resolvedPath); } catch { /* ignore */ }
+    } finally {
+      // 截图临时文件用完即删
+      if (isTempFile && resolvedPath) {
+        try { fs.unlinkSync(resolvedPath); } catch { /* ignore */ }
+      }
     }
 
     if (screenshot) {
-      return `✅ 已向频道 ${channel_id} 发送桌面截图${message ? `（备注：${message}）` : ''}`;
+      return `✅ 已向微信用户 ${user_id.slice(0, 8)}*** 发送桌面截图${message ? `（备注：${message}）` : ''}`;
+    } else {
+      return `✅ 已向微信用户 ${user_id.slice(0, 8)}*** 发送文件：${path.basename(resolvedPath)}${message ? `（备注：${message}）` : ''}`;
     }
-    return `✅ 已向频道 ${channel_id} 发送文件：${path.basename(resolvedPath)}（来自 ${resolvedPath}）`;
   },
 };
 
-export default discordSendFileSkill;
+export default wechatSendFileSkill;

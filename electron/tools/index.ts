@@ -22,10 +22,14 @@ import { systemTools } from './impl/system';
 import { ocrTools } from './impl/ocr';
 import runCommandTool from './impl/runCommand';
 import discordSendTool from './impl/discordSend';
+import wechatSendTool from './impl/wechatSend';  // 🆕 微信发送工具
 import readManualTool from './impl/manual';
 import manualManageTool from './impl/manual_manage';
 import memoryTool from './impl/memory';
 import todoTool from './impl/todo';
+import requestAgentMode from './impl/requestAgentMode';  // 🆕 请求 Agent 模式
+import showAvailableTools from './impl/showAvailableTools';  // 🆕 显示可用工具列表
+import switchAgentMode from './impl/switchAgentMode';  // 🆕 切换 Agent 模式
 import { skillList } from '../skills/index';
 import { setSkillRegistry } from '../skills/skillContext';
 
@@ -35,10 +39,14 @@ const registry = new ToolRegistry()
   .register(screenshotTool)
   .register(runCommandTool)
   .register(discordSendTool)
+  .register(wechatSendTool)      // 🆕 注册微信发送工具
   .register(readManualTool)
   .register(manualManageTool)  // 说明书管理工具（AI 自我进化：创建/编辑工作流）
-  .register(memoryTool)  // 全局核心记忆工具（AI 主动管理用户画像）
-  .register(todoTool);   // 任务管理工具（会话级任务追踪）
+  .register(memoryTool)        // 全局核心记忆工具（AI 主动管理用户画像）
+  .register(todoTool)          // 任务管理工具（会话级任务追踪）
+  .register(requestAgentMode)  // 🆕 请求 Agent 模式工具（Chat→Agent 渐进式升级）
+  .register(showAvailableTools) // 🆕 显示可用工具列表（AI 自我感知能力边界）
+  .register(switchAgentMode);  // 🆕 切换 Agent 模式（AI 主动切换）
 
 // 批量注册所有浏览器工具
 for (const tool of browserTools) {

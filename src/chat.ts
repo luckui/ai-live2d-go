@@ -180,9 +180,14 @@ function addToolCallBubble(ev: {
   result: string;
   ok: boolean;
   durationMs: number;
+  conversationId?: string;  // 🆕 工具调用来源对话ID
 }): void {
   const messagesDiv = document.getElementById('messages');
   if (!messagesDiv) return;
+
+  // 🆕 如果工具调用来自其他对话，显示警告标签
+  const isOtherConv = ev.conversationId && ev.conversationId !== currentConversationId;
+  const convTag = isOtherConv ? `<span style="color:#ff6b6b; font-size:10px;">[其他对话]</span> ` : '';
 
   const icon   = ev.ok ? '✅' : ev.result.startsWith('⏸️') ? '⏸️' : '❌';
   const status = ev.ok ? 'ok' : ev.result.startsWith('⏸️') ? 'pause' : 'err';
@@ -202,7 +207,7 @@ function addToolCallBubble(ev: {
     <details>
       <summary>
         <span class="tc-icon">${icon}</span>
-        <span class="tc-name">${escapeHtml(ev.name)}</span>
+        <span class="tc-name">${convTag}${escapeHtml(ev.name)}</span>
         <span class="tc-args">${escapeHtml(argsText.slice(0, 60))}${argsText.length > 60 ? '…' : ''}</span>
         <span class="tc-duration tc-${status}">${ev.durationMs}ms</span>
       </summary>
@@ -476,6 +481,61 @@ export async function initChat(): Promise<void> {
     toggleConvPanel();
   });
 
+  // Agent 模式切换器
+  let isAgentMode = true; // 默认 Agent 模式
+  const agentModeBtn = document.getElementById('agent-mode-btn');
+  const agentModeText = document.getElementById('agent-mode-text');
+  
+  // 更新 UI 的通用函数
+  function updateAgentModeUI(mode: string) {
+    const isAgent = mode === 'agent' || mode === 'agent-debug';
+    isAgentMode = isAgent;
+    
+    if (agentModeText) {
+      if (mode === 'agent-debug') {
+        agentModeText.textContent = 'Debug';
+      } else {
+        agentModeText.textContent = isAgent ? 'Agent' : 'Chat';
+      }
+    }
+    
+    if (agentModeBtn) {
+      if (isAgent) {
+        agentModeBtn.classList.add('active');
+      } else {
+        agentModeBtn.classList.remove('active');
+      }
+    }
+  }
+  
+  // 初始化显示为 Agent 模式
+  updateAgentModeUI('agent');
+
+  // 用户点击按钮切换
+  agentModeBtn?.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    const newMode = isAgentMode ? 'chat' : 'agent';
+    
+    // 发送 IPC 切换模式
+    await (window as any).agentAPI?.setMode(newMode);
+    console.log(`[Agent Mode] 用户切换到 ${newMode.toUpperCase()} 模式`);
+    
+    // 更新 UI
+    updateAgentModeUI(newMode);
+  });
+
+  // 监听 AI 主动切换模式
+  (window as any).agentAPI?.onModeChanged((mode: string) => {
+    console.log(`[Agent Mode] AI 切换到 ${mode.toUpperCase()} 模式`);
+    updateAgentModeUI(mode);
+  });
+
+  // 监听 AI 主动切换模式
+  (window as any).agentAPI?.onModeChanged((mode: string) => {
+    console.log(`[Agent Mode] AI 切换到 ${mode.toUpperCase()} 模式`);
+    updateAgentModeUI(mode);
+  });
+
   // 新建对话（header 按钮）
   document.getElementById('new-chat-btn')?.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -502,7 +562,9 @@ export async function initChat(): Promise<void> {
   // 加载或创建初始对话
   const convs = await window.chatAPI!.listConversations();
   if (convs.length > 0) {
-    await switchConversation(convs[0].id);
+    // 优先加载有消息的对话，避免启动时显示空白对话
+    const convWithMessages = convs.find(c => c.preview && c.preview.trim() !== '');
+    await switchConversation((convWithMessages || convs[0]).id);
   } else {
     const conv = await window.chatAPI!.createConversation();
     await switchConversation(conv.id);

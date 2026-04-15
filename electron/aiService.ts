@@ -2,6 +2,7 @@
 import aiConfig, { LLMProviderConfig } from './ai.config';
 import { addMessage, getRecentContext, getMessages, renameConversation } from './db';
 import { toolRegistry } from './tools/index';
+import { getCurrentToolsets } from './agentMode';
 import type { ChatMessage, ContentPart, ToolSchema } from './tools/types';
 import { isToolImageResult } from './tools/types';
 import { memoryManager, globalMemoryManager, recordMessageActivity } from './memory/index';
@@ -22,6 +23,8 @@ export interface ToolCallEvent {
   ok: boolean;
   /** 执行耗时（毫秒） */
   durationMs: number;
+  /** 工具调用来源对话ID（用于区分跨对话工具调用） */
+  conversationId?: string;
 }
 
 let _toolEventListener: ((ev: ToolCallEvent) => void) | null = null;
@@ -47,6 +50,7 @@ async function execAndEmit(name: string, argsJson: string, conversationId?: stri
       result: resultText.slice(0, 300),
       ok: !resultText.startsWith('❌') && !resultText.startsWith('[工具错误]'),
       durationMs,
+      conversationId,  // 🆕 传递对话ID，用于区分工具调用来源
     });
   }
   return result;
@@ -116,6 +120,25 @@ function isLikelyDomParseIntent(userText: string): boolean {
 function isLikelyCannotParseExcuse(replyText: string): boolean {
   const t = replyText.toLowerCase();
   return /(无法|不能|不支持|没有.*功能|没办法|无法直接解析|不能解析html|看不了源码)/i.test(t);
+}
+
+/**
+ * 检测消息来源平台（基于平台标签）
+ *
+ * 介绍：Discord/WeChat Adapter 会在转发消息时注入平台标签：
+ *   - Discord：`[来源：Discord | 频道：xxx | 用户：xxx]`
+ *   - WeChat：`[来源：WeChat | 用户：xxx]`
+ *
+ * 当检测到平台标签时，会自动注入对应平台的专属工具：
+ *   - Discord → `discord_send`, `discord_send_file`
+ *   - WeChat → `wechat_send` (未来扩展)
+ *
+ * @returns 平台名（'discord' | 'wechat'）或 null
+ */
+function detectPlatform(userContent: string): string | null {
+  if (userContent.includes('[来源：Discord')) return 'discord';
+  if (userContent.includes('[来源：WeChat')) return 'wechat';
+  return null;
 }
 
 // ── 工具调用循环 ──────────────────────────────────────────
@@ -347,8 +370,17 @@ export async function sendChatMessage(
   let replyContent: string;
   try {
     // ReAct 模式：工具调用循环，走一步看一步
-    // Toolset 系统（借鉴 hermes-agent）：根据 provider 配置的 enabledToolsets 动态选择工具
-    const enabledToolsets = provider.enabledToolsets ?? ['default'];
+    // Toolset 系统（借鉴 hermes-agent）：使用全局 Agent 模式（chat/agent/agent-debug）
+    const enabledToolsets = getCurrentToolsets();  // ['chat'] 或 ['agent']
+
+    // 🆕 平台检测：根据消息来源动态注入平台专属工具
+    // 例：[来源：Discord | ...] → 自动添加 discord_send, discord_send_file
+    const platform = detectPlatform(userContent);
+    if (platform) {
+      enabledToolsets.push(platform);  // ['chat', 'discord']
+      console.log(`[平台检测] 检测到 ${platform} 来源，已注入平台工具`);
+    }
+
     const tools = toolRegistry.isEmpty ? undefined : toolRegistry.getSchemasForToolset(enabledToolsets);
     replyContent = await callWithToolLoop(provider, messages, tools, conversationId);
   } catch (e) {

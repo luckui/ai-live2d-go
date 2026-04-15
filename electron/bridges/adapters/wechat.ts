@@ -17,6 +17,8 @@ import { sendChatMessage } from '../../aiService';
 import { app } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs/promises';
+import * as fsSync from 'fs';
+import * as crypto from 'crypto';  // 🆕 Node.js 内置加密库，用于 AES-128-ECB
 import QRCode from 'qrcode';
 
 // ── Constants ────────────────────────────────────────────────────────
@@ -37,12 +39,24 @@ const API_TIMEOUT_MS = 15_000;
 const QR_TIMEOUT_MS = 35_000;
 
 const ITEM_TEXT = 1;
+const ITEM_IMAGE = 2;      // 🆕 图片消息类型
+const ITEM_VOICE = 3;      // 🆕 语音消息类型
+const ITEM_FILE = 4;       // 🆕 文件消息类型
+const ITEM_VIDEO = 5;      // 🆕 视频消息类型
+
+const MEDIA_IMAGE = 1;     // 🆕 媒体类型：图片
+const MEDIA_VIDEO = 2;     // 🆕 媒体类型：视频
+const MEDIA_FILE = 3;      // 🆕 媒体类型：文件
+const MEDIA_VOICE = 4;     // 🆕 媒体类型：语音
+
 const MSG_TYPE_USER = 1;
 const MSG_STATE_FINISH = 2;
 
 const MAX_MESSAGE_LENGTH = 4000;
 const MAX_CONSECUTIVE_FAILURES = 3;
 const RETRY_DELAY_SECONDS = 2;
+
+const EP_GET_UPLOAD_URL = 'ilink/bot/getuploadurl';  // 🆕 获取文件上传 URL
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -179,6 +193,86 @@ function splitMessage(text: string, maxLength = MAX_MESSAGE_LENGTH): string[] {
     remaining = remaining.slice(cutAt).trimStart();
   }
   return chunks;
+}
+
+// ── 🆕 文件发送辅助函数 ──────────────────────────────────────────────
+
+/**
+ * AES-128-ECB 加密（PKCS#7 padding）
+ */
+function aesEncrypt(plaintext: Buffer, key: Buffer): Buffer {
+  // PKCS#7 padding
+  const blockSize = 16;
+  const padLength = blockSize - (plaintext.length % blockSize);
+  const padded = Buffer.concat([plaintext, Buffer.alloc(padLength, padLength)]);
+  
+  // AES-128-ECB 加密
+  const cipher = crypto.createCipheriv('aes-128-ecb', key, null);
+  cipher.setAutoPadding(false);  // 手动 padding
+  return Buffer.concat([cipher.update(padded), cipher.final()]);
+}
+
+/**
+ * 获取文件 MIME 类型
+ */
+function getMimeType(filePath: string): string {
+  const ext = path.extname(filePath).toLowerCase();
+  const mimeMap: Record<string, string> = {
+    // 图片
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.png': 'image/png',
+    '.gif': 'image/gif',
+    '.webp': 'image/webp',
+    '.bmp': 'image/bmp',
+    
+    // 视频
+    '.mp4': 'video/mp4',
+    '.mov': 'video/quicktime',
+    '.avi': 'video/x-msvideo',
+    '.mkv': 'video/x-matroska',
+    '.webm': 'video/webm',
+    
+    // 音频
+    '.mp3': 'audio/mpeg',
+    '.wav': 'audio/wav',
+    '.ogg': 'audio/ogg',
+    '.m4a': 'audio/mp4',
+    
+    // 文档
+    '.pdf': 'application/pdf',
+    '.doc': 'application/msword',
+    '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    '.xls': 'application/vnd.ms-excel',
+    '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    '.ppt': 'application/vnd.ms-powerpoint',
+    '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    '.txt': 'text/plain',
+    
+    // 压缩包
+    '.zip': 'application/zip',
+    '.rar': 'application/x-rar-compressed',
+    '.7z': 'application/x-7z-compressed',
+  };
+  
+  return mimeMap[ext] || 'application/octet-stream';
+}
+
+/**
+ * 根据 MIME 类型确定微信媒体类型和消息项类型
+ */
+function getMediaItemType(mimeType: string, filePath: string): { mediaType: number; itemType: number } {
+  if (mimeType.startsWith('image/')) {
+    return { mediaType: MEDIA_IMAGE, itemType: ITEM_IMAGE };
+  }
+  if (mimeType.startsWith('video/')) {
+    return { mediaType: MEDIA_VIDEO, itemType: ITEM_VIDEO };
+  }
+  if (mimeType.startsWith('audio/') || filePath.endsWith('.silk')) {
+    return { mediaType: MEDIA_VOICE, itemType: ITEM_VOICE };
+  }
+  // 默认：文件
+  return { mediaType: MEDIA_FILE, itemType: ITEM_FILE };
 }
 
 function extractText(msg: ILinkMessage): string {
@@ -590,7 +684,10 @@ export class WeChatAdapter {
     }
   }
 
-  private async sendText(userId: string, text: string): Promise<void> {
+  /**
+   * 发送文本消息到微信用户
+   */
+  async sendText(userId: string, text: string): Promise<void> {
     const contextToken = this.tokenStore.get(userId);
     const payload = {
       msg: {
@@ -629,5 +726,225 @@ export class WeChatAdapter {
     } catch {
       // 忽略 typing 错误
     }
+  }
+
+  /**
+   * 🆕 发送文件到微信用户（支持图片、视频、文档等）
+   * 
+   * 微信 iLink API 文件传输流程：
+   *   1. 读取文件内容
+   *   2. 生成随机 AES-128 密钥
+   *   3. 用 AES-128-ECB + PKCS#7 padding 加密文件
+   *   4. 调用 getuploadurl 获取 CDN 上传 URL
+   *   5. POST 加密文件到 CDN
+   *   6. 发送消息，包含 encrypt_query_param 和 aes_key
+   *   
+   * @param userId - 微信用户 ID
+   * @param filePath - 本地文件绝对路径
+   */
+  async sendFile(userId: string, filePath: string): Promise<void> {
+    console.log(`[WeChat] 开始发送文件: ${filePath} 到用户 ${userId}`);
+    
+    // 读取文件
+    const fileBuffer = fsSync.readFileSync(filePath);
+    const fileName = path.basename(filePath);
+    const fileSize = fileBuffer.length;
+    const fileMd5 = crypto.createHash('md5').update(fileBuffer).digest('hex');
+    
+    console.log(`[WeChat] 文件信息: 名称=${fileName}, 大小=${fileSize}, MD5=${fileMd5}`);
+    
+    // 检测媒体类型
+    const mimeType = getMimeType(filePath);
+    const { mediaType, itemType } = getMediaItemType(mimeType, filePath);
+    
+    console.log(`[WeChat] 媒体类型: MIME=${mimeType}, mediaType=${mediaType}, itemType=${itemType}`);
+    
+    // 生成随机 AES-128 密钥（16 字节）
+    const aesKey = crypto.randomBytes(16);
+    const fileKey = crypto.randomBytes(16).toString('hex');
+    
+    console.log(`[WeChat] 生成密钥: fileKey=${fileKey}, aesKey(hex)=${aesKey.toString('hex')}`);
+    
+    // 加密文件（AES-128-ECB + PKCS#7 padding）
+    const encryptedBuffer = aesEncrypt(fileBuffer, aesKey);
+    const encryptedSize = encryptedBuffer.length;
+    
+    console.log(`[WeChat] 加密完成: 原始大小=${fileSize}, 加密后大小=${encryptedSize}`);
+    
+    // 获取上传 URL
+    const uploadData = await this.getUploadUrl(userId, {
+      mediaType,
+      filekey: fileKey,
+      rawsize: fileSize,
+      rawfilemd5: fileMd5,
+      filesize: encryptedSize,
+      aeskey_hex: aesKey.toString('hex'),
+    });
+    
+    console.log(`[WeChat] 获取上传 URL 成功:`, JSON.stringify(uploadData));
+    
+    // 上传加密文件到 CDN
+    const encryptQueryParam = await this.uploadFileToCdn(
+      uploadData.upload_param || uploadData.upload_full_url,
+      encryptedBuffer,
+      fileKey
+    );
+    
+    // 构建消息项
+    const contextToken = this.tokenStore.get(userId);
+    const aesKeyBase64 = Buffer.from(aesKey.toString('hex'), 'ascii').toString('base64');
+    
+    console.log(`[WeChat] 构建消息: contextToken=${contextToken}, aesKeyBase64=${aesKeyBase64.substring(0, 20)}...`);
+    
+    let itemList;
+    if (itemType === ITEM_IMAGE) {
+      itemList = [{
+        type: ITEM_IMAGE,
+        image_item: {
+          media: {
+            encrypt_query_param: encryptQueryParam,
+            aes_key: aesKeyBase64,
+            encrypt_type: 1,
+          },
+          mid_size: encryptedSize,
+        },
+      }];
+    } else if (itemType === ITEM_VIDEO) {
+      itemList = [{
+        type: ITEM_VIDEO,
+        video_item: {
+          media: {
+            encrypt_query_param: encryptQueryParam,
+            aes_key: aesKeyBase64,
+            encrypt_type: 1,
+          },
+          video_size: encryptedSize,
+          play_length: 0,
+          video_md5: fileMd5,
+        },
+      }];
+    } else if (itemType === ITEM_VOICE) {
+      itemList = [{
+        type: ITEM_VOICE,
+        voice_item: {
+          media: {
+            encrypt_query_param: encryptQueryParam,
+            aes_key: aesKeyBase64,
+            encrypt_type: 1,
+          },
+          playtime: 0,
+        },
+      }];
+    } else {
+      // ITEM_FILE（默认）
+      itemList = [{
+        type: ITEM_FILE,
+        file_item: {
+          media: {
+            encrypt_query_param: encryptQueryParam,
+            aes_key: aesKeyBase64,
+            encrypt_type: 1,
+          },
+          file_name: fileName,
+          len: String(fileSize),
+        },
+      }];
+    }
+    
+    // 发送消息
+    const payload = {
+      msg: {
+        from_user_id: '',
+        to_user_id: userId,
+        client_id: `lp-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+        message_type: 2,
+        message_state: MSG_STATE_FINISH,
+        context_token: contextToken,
+        item_list: itemList,
+      },
+      base_info: baseInfo(),
+    };
+    
+    console.log(`[WeChat] 发送消息 payload:`, JSON.stringify(payload, null, 2));
+    
+    await ilinkPost(this.baseUrl, EP_SEND_MESSAGE, payload, this.token);
+    
+    console.log(`[WeChat] ✅ 文件发送成功: ${fileName}`);
+  }
+  
+  /**
+   * 获取文件上传 URL
+   */
+  private async getUploadUrl(userId: string, params: {
+    mediaType: number;
+    filekey: string;
+    rawsize: number;
+    rawfilemd5: string;
+    filesize: number;
+    aeskey_hex: string;
+  }) {
+    const payload = {
+      to_user_id: userId,
+      media_type: params.mediaType,
+      filekey: params.filekey,
+      rawsize: params.rawsize,
+      rawfilemd5: params.rawfilemd5,
+      filesize: params.filesize,
+      aeskey: params.aeskey_hex,
+      base_info: baseInfo(),
+    };
+    
+    const response = await ilinkPost(this.baseUrl, EP_GET_UPLOAD_URL, payload, this.token);
+    return response as { upload_param?: string; upload_full_url?: string };
+  }
+  
+  /**
+   * 上传加密文件到 CDN
+   */
+  private async uploadFileToCdn(
+    uploadUrl: string,
+    encryptedData: Buffer,
+    fileKey: string
+  ): Promise<string> {
+    // 构建 CDN URL
+    let finalUrl: string;
+    if (uploadUrl.startsWith('http')) {
+      // upload_full_url 格式（直接使用完整 URL）
+      finalUrl = uploadUrl;
+    } else {
+      // upload_param 格式（需要拼接 CDN 基础 URL）
+      const cdnBase = 'https://novac2c.cdn.weixin.qq.com/c2c';
+      const encodedParam = encodeURIComponent(uploadUrl);
+      const encodedFileKey = encodeURIComponent(fileKey);
+      finalUrl = `${cdnBase}/upload?encrypted_query_param=${encodedParam}&filekey=${encodedFileKey}`;
+    }
+    
+    console.log(`[WeChat] 上传文件到 CDN: ${finalUrl.substring(0, 100)}...`);
+    
+    // POST 上传加密文件
+    const response = await fetch(finalUrl, {
+      method: 'POST',
+      body: encryptedData,
+      headers: {
+        'Content-Type': 'application/octet-stream',
+      },
+    });
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`[WeChat] CDN 上传失败: ${response.status} ${response.statusText}`);
+      throw new Error(`CDN upload failed: ${response.status} ${response.statusText} - ${errorText.slice(0, 200)}`);
+    }
+    
+    // 🔑 关键：encrypt_query_param 从响应头 x-encrypted-param 中获取
+    const encryptedParam = response.headers.get('x-encrypted-param');
+    if (!encryptedParam) {
+      const responseText = await response.text();
+      console.error(`[WeChat] CDN 响应缺少 x-encrypted-param 头: ${responseText.slice(0, 200)}`);
+      throw new Error(`CDN upload missing x-encrypted-param header: ${responseText.slice(0, 200)}`);
+    }
+    
+    console.log(`[WeChat] CDN 上传成功，encrypt_query_param: ${encryptedParam.substring(0, 50)}...`);
+    return encryptedParam;
   }
 }
