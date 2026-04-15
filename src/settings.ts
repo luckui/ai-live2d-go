@@ -15,7 +15,6 @@ interface ProviderConfig {
 
 interface RuntimeConfig {
   activeProvider: string;
-  agentMode?: 'off' | 'force';
   contextWindowRounds: number;
   providers: Record<string, ProviderConfig>;
   /** 用户主动删除的 provider key，用于 loadPersistedConfig 合并时跳过 */
@@ -29,12 +28,32 @@ interface DiscordConfig {
   proxyUrl: string;
 }
 
+interface WeChatConfig {
+  enabled: boolean;
+  token?: string;
+  accountId?: string;
+  baseUrl?: string;
+  sendChunkDelay?: number;
+}
+
 interface TTSConfig {
   enabled: boolean;
   url: string;
   apiKey: string;
   speaker: string;
   language: string;
+}
+
+interface MemoryExportResult {
+  success: boolean;
+  path?: string;
+  error?: string;
+}
+
+interface MemoryImportResult {
+  success: boolean;
+  content?: string;
+  error?: string;
 }
 
 declare global {
@@ -48,10 +67,21 @@ declare global {
       save(cfg: DiscordConfig): Promise<void>;
       getStatus(): Promise<'online' | 'offline'>;
     };
+    wechatAPI?: {
+      get(): Promise<WeChatConfig>;
+      save(cfg: WeChatConfig): Promise<void>;
+      getStatus(): Promise<'online' | 'offline'>;
+      startQRLogin(): Promise<{ success: boolean; credentials?: any; error?: string }>;
+      onQRLoginUpdate(cb: (state: any) => void): void;
+    };
     ttsSettingsAPI?: {
       get(): Promise<TTSConfig>;
       save(cfg: TTSConfig): Promise<{ isEnabled: boolean; fileSaved: boolean; debug: Record<string, unknown> }>;
       test(url: string): Promise<{ ok: boolean; status?: number; body?: string; error?: string }>;
+    };
+    memoryAPI?: {
+      export(): Promise<MemoryExportResult>;
+      import(): Promise<MemoryImportResult>;
     };
   }
 }
@@ -81,9 +111,6 @@ function syncFormToCfg(): void {
 
   const rounds = parseInt((document.getElementById('s-rounds') as HTMLInputElement).value, 10);
   if (rounds > 0) cfg.contextWindowRounds = rounds;
-
-  const mode = (document.getElementById('s-agent-mode') as HTMLSelectElement).value;
-  cfg.agentMode = mode === 'force' ? 'force' : 'off';
 }
 
 function renderForm(): void {
@@ -148,7 +175,6 @@ async function loadSettingsUI(): Promise<void> {
   editKey = cfg.activeProvider;
   (document.getElementById('s-rounds') as HTMLInputElement).value =
     String(cfg.contextWindowRounds);
-  (document.getElementById('s-agent-mode') as HTMLSelectElement).value = cfg.agentMode ?? 'off';
   renderPills();
   renderForm();
 }
@@ -202,6 +228,122 @@ async function saveDiscordSettings(): Promise<void> {
   }
 }
 
+// ── WeChat UI ─────────────────────────────────────────
+
+async function loadWeChatUI(): Promise<void> {
+  if (!window.wechatAPI) return;
+  const wc = await window.wechatAPI.get();
+  (document.getElementById('wc-enabled') as HTMLInputElement).checked = wc.enabled;
+  (document.getElementById('wc-chunk-delay') as HTMLInputElement).value = String(wc.sendChunkDelay ?? 0.35);
+  
+  // 显示账号信息
+  if (wc.token && wc.accountId) {
+    (document.getElementById('wc-account-id') as HTMLInputElement).value = wc.accountId;
+    (document.getElementById('wc-token-preview') as HTMLInputElement).value = wc.token.slice(0, 8) + '***';
+    (document.getElementById('wc-account-section') as HTMLElement).style.display = 'block';
+    (document.getElementById('wc-qr-section') as HTMLElement).style.display = 'none';
+  } else {
+    (document.getElementById('wc-account-section') as HTMLElement).style.display = 'none';
+    (document.getElementById('wc-qr-section') as HTMLElement).style.display = 'block';
+  }
+  
+  await refreshWeChatStatus();
+}
+
+async function refreshWeChatStatus(): Promise<void> {
+  if (!window.wechatAPI) return;
+  const status = await window.wechatAPI.getStatus();
+  const dot      = document.getElementById('wc-status-dot')  as HTMLElement;
+  const listDot  = document.getElementById('wc-list-dot')    as HTMLElement | null;
+  const text     = document.getElementById('wc-status-text') as HTMLElement;
+  const cls = status === 'online' ? 's-status-on' : 's-status-off';
+  dot.className      = `s-status-dot ${cls}`;
+  if (listDot) listDot.className = `s-bridge-dot ${cls}`;
+  text.textContent   = status === 'online' ? '已连接' : '未启动';
+}
+
+async function saveWeChatSettings(): Promise<void> {
+  if (!window.wechatAPI) return;
+  const cfg: WeChatConfig = {
+    enabled: (document.getElementById('wc-enabled') as HTMLInputElement).checked,
+    sendChunkDelay: parseFloat((document.getElementById('wc-chunk-delay') as HTMLInputElement).value),
+  };
+  const btn = document.getElementById('wc-save-btn') as HTMLButtonElement;
+  btn.textContent = '保存中…';
+  btn.disabled = true;
+  try {
+    await window.wechatAPI.save(cfg);
+    btn.textContent = '✓ 已保存';
+    setTimeout(() => {
+      void refreshWeChatStatus();
+      btn.textContent = '保存并重启 Bot';
+      btn.disabled = false;
+    }, 2000);
+  } catch (e) {
+    btn.textContent = '保存失败';
+    setTimeout(() => { btn.textContent = '保存并重启 Bot'; btn.disabled = false; }, 2000);
+    console.error('[WeChat save]', e);
+  }
+}
+
+async function startWeChatQRLogin(): Promise<void> {
+  if (!window.wechatAPI) return;
+  
+  const btn = document.getElementById('wc-qr-start-btn') as HTMLButtonElement;
+  const display = document.getElementById('wc-qr-display') as HTMLElement;
+  const statusText = document.getElementById('wc-qr-status') as HTMLElement;
+  const img = document.getElementById('wc-qr-img') as HTMLImageElement;
+  
+  btn.disabled = true;
+  btn.textContent = '启动中…';
+  display.style.display = 'block';
+  statusText.textContent = '正在获取二维码...';
+  
+  // 监听状态更新
+  window.wechatAPI.onQRLoginUpdate((state: any) => {
+    console.log('[WeChat QR]', state);
+    if (state.qrcodeUrl) {
+      img.src = state.qrcodeUrl;
+    }
+    if (state.status === 'pending') {
+      statusText.textContent = '✨ 请使用微信扫描上方二维码';
+      statusText.style.color = '#4CAF50';
+    } else if (state.status === 'scanned') {
+      statusText.textContent = '✅ 已扫码，请在微信里确认授权...';
+      statusText.style.color = '#2196F3';
+    } else if (state.status === 'confirmed') {
+      statusText.textContent = '🎉 登录成功！正在保存凭证...';
+      statusText.style.color = '#4CAF50';
+      setTimeout(() => {
+        void loadWeChatUI(); // 刷新 UI 显示账号信息
+        display.style.display = 'none';
+        btn.disabled = false;
+        btn.textContent = '🔑 启动二维码登录';
+      }, 2000);
+    } else if (state.status === 'expired') {
+      statusText.textContent = `⚠️ 二维码已过期：${state.error || '请重试'}`;
+      statusText.style.color = '#FF9800';
+      btn.disabled = false;
+      btn.textContent = '🔄 重新获取二维码';
+    } else if (state.status === 'error') {
+      statusText.textContent = `❌ 登录失败：${state.error || '未知错误'}`;
+      statusText.style.color = '#F44336';
+      btn.disabled = false;
+      btn.textContent = '🔄 重试';
+    }
+  });
+  
+  // 启动 QR 登录
+  try {
+    await window.wechatAPI.startQRLogin();
+  } catch (err) {
+    statusText.textContent = `❌ 启动失败：${err}`;
+    statusText.style.color = '#F44336';
+    btn.disabled = false;
+    btn.textContent = '🔄 重试';
+  }
+}
+
 // ── TTS UI ────────────────────────────────────────────
 
 async function refreshTTSRuntimeStatus(): Promise<void> {
@@ -219,6 +361,74 @@ async function refreshTTSRuntimeStatus(): Promise<void> {
   } catch {
     dot.className   = 's-status-dot s-status-off';
     text.textContent = '\u65e0\u6cd5\u83b7\u53d6\u72b6\u6001';
+  }
+}
+
+// ── Memory UI ─────────────────────────────────────────
+
+async function exportMemory(): Promise<void> {
+  if (!window.memoryAPI) return;
+  const btn = document.getElementById('memory-export-btn') as HTMLButtonElement | null;
+  if (!btn) return;
+  
+  btn.textContent = '导出中…';
+  btn.disabled = true;
+  
+  try {
+    const result = await window.memoryAPI.export();
+    if (result.success) {
+      btn.textContent = '✓ 已导出';
+      setTimeout(() => {
+        btn.textContent = '📤 导出记忆';
+        btn.disabled = false;
+      }, 1800);
+    } else {
+      btn.textContent = '导出失败';
+      setTimeout(() => {
+        btn.textContent = '📤 导出记忆';
+        btn.disabled = false;
+      }, 2000);
+    }
+  } catch (e) {
+    console.error('[Memory export]', e);
+    btn.textContent = '导出失败';
+    setTimeout(() => {
+      btn.textContent = '📤 导出记忆';
+      btn.disabled = false;
+    }, 2000);
+  }
+}
+
+async function importMemory(): Promise<void> {
+  if (!window.memoryAPI) return;
+  const btn = document.getElementById('memory-import-btn') as HTMLButtonElement | null;
+  if (!btn) return;
+  
+  btn.textContent = '导入中…';
+  btn.disabled = true;
+  
+  try {
+    const result = await window.memoryAPI.import();
+    if (result.success) {
+      btn.textContent = '✓ 已导入';
+      setTimeout(() => {
+        btn.textContent = '📥 导入记忆';
+        btn.disabled = false;
+      }, 1800);
+    } else {
+      btn.textContent = '导入失败';
+      setTimeout(() => {
+        btn.textContent = '📥 导入记忆';
+        btn.disabled = false;
+      }, 2000);
+    }
+  } catch (e) {
+    console.error('[Memory import]', e);
+    btn.textContent = '导入失败';
+    setTimeout(() => {
+      btn.textContent = '📥 导入记忆';
+      btn.disabled = false;
+    }, 2000);
   }
 }
 
@@ -369,6 +579,7 @@ export function openSettings(): void {
   document.getElementById('settings-panel')?.classList.add('visible');
   void loadSettingsUI();
   void loadDiscordUI();
+  void loadWeChatUI();
   void loadTTSUI();
 }
 
@@ -406,6 +617,10 @@ export function initSettings(): void {
 
   // 保存
   document.getElementById('settings-save-btn')?.addEventListener('click', saveSettings);
+
+  // 记忆导出/导入
+  document.getElementById('memory-export-btn')?.addEventListener('click', () => void exportMemory());
+  document.getElementById('memory-import-btn')?.addEventListener('click', () => void importMemory());
 
   // API Key 显示/隐藏
   document.getElementById('s-eye-btn')?.addEventListener('click', () => {
@@ -458,6 +673,10 @@ export function initSettings(): void {
     if (input.type === 'password') { input.type = 'text';     btn.textContent = '🙈'; }
     else                           { input.type = 'password'; btn.textContent = '👁'; }
   });
+
+  // ── WeChat 表单事件 ──────────────────────────────────
+  document.getElementById('wc-save-btn')?.addEventListener('click', () => void saveWeChatSettings());
+  document.getElementById('wc-qr-start-btn')?.addEventListener('click', () => void startWeChatQRLogin());
   // ── TTS 表单事件 ─────────────────────────────────────
   document.getElementById('tts-save-btn')?.addEventListener('click', () => void saveTTSSettings());
   document.getElementById('tts-test-btn')?.addEventListener('click', () => void runTTSHealthCheck());

@@ -32,9 +32,10 @@ export function setToolEventListener(cb: ((ev: ToolCallEvent) => void) | null): 
 }
 
 /** 内部：执行工具并同时发射调试事件 */
-async function execAndEmit(name: string, argsJson: string) {
+async function execAndEmit(name: string, argsJson: string, conversationId?: string) {
   const t0 = Date.now();
-  const result = await toolRegistry.execute(name, argsJson);
+  const context = conversationId ? { conversationId } : undefined;
+  const result = await toolRegistry.execute(name, argsJson, context);
   const durationMs = Date.now() - t0;
   if (_toolEventListener) {
     const resultText = isToolImageResult(result) ? result.text : String(result);
@@ -131,6 +132,7 @@ async function callWithToolLoop(
   provider: LLMProviderConfig,
   messages: ChatMessage[],
   toolSchemas?: ToolSchema[],
+  conversationId?: string,
 ): Promise<string> {
   const withTools = !!toolSchemas?.length;
   // 在副本上操作，不污染调用方的数组
@@ -218,7 +220,7 @@ async function callWithToolLoop(
     const execResults = await Promise.all(
       choice.message.tool_calls.map(async (tc) => ({
         tc,
-        result: await execAndEmit(tc.function.name, tc.function.arguments),
+        result: await execAndEmit(tc.function.name, tc.function.arguments, conversationId),
       }))
     );
 
@@ -345,9 +347,10 @@ export async function sendChatMessage(
   let replyContent: string;
   try {
     // ReAct 模式：工具调用循环，走一步看一步
-    // getSchemasForMode 会在有 Skill 时自动隐藏 sys_* 原子工具，降低 AI 选择压力
-    const tools = toolRegistry.isEmpty ? undefined : toolRegistry.getSchemasForMode();
-    replyContent = await callWithToolLoop(provider, messages, tools);
+    // Toolset 系统（借鉴 hermes-agent）：根据 provider 配置的 enabledToolsets 动态选择工具
+    const enabledToolsets = provider.enabledToolsets ?? ['default'];
+    const tools = toolRegistry.isEmpty ? undefined : toolRegistry.getSchemasForToolset(enabledToolsets);
+    replyContent = await callWithToolLoop(provider, messages, tools, conversationId);
   } catch (e) {
     replyContent = `（请求失败：${(e as Error).message}）`;
   }

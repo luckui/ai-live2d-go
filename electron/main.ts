@@ -86,12 +86,16 @@ import {
   getMemoryCursor,
   getMemoryFragments,
   getGlobalMemoryCursor,
+  getStructuredGlobalMemory,
+  setStructuredGlobalMemory,
 } from './db';
 import { sendChatMessage, setToolEventListener } from './aiService';
 import { triggerConversationLeave, memoryManager, globalMemoryManager, runStartupCatchUp, startIdleScheduler } from './memory/index';
+import { exportMemoryToMarkdown, importMemoryFromMarkdown } from './memory/memoryExport';
 import aiConfig from './ai.config';
 import { startBridges, stopBridges } from './bridges/index';
 import { DiscordAdapter } from './bridges/adapters/discord';
+import { WeChatAdapter, qrLogin } from './bridges/adapters/wechat';
 import { ttsService } from './ttsService';
 
 // ── 实运行时加载持久化的 LLM 配置 ──────────────────────────────
@@ -110,7 +114,6 @@ function loadPersistedConfig(): void {
   try {
     const saved = JSON.parse(stored) as typeof aiConfig;
     if (saved.activeProvider) aiConfig.activeProvider = saved.activeProvider;
-    if (saved.agentMode) aiConfig.agentMode = saved.agentMode;
     if (saved.contextWindowRounds) aiConfig.contextWindowRounds = saved.contextWindowRounds;
 
     // 记录用户曾主动删除的 provider key
@@ -245,7 +248,6 @@ function createWindow(): void {
   // ── LLM 设置 ──────────────────────────────────────────────
   ipcMain.handle('settings:get', () => ({
     activeProvider: aiConfig.activeProvider,
-    agentMode: aiConfig.agentMode ?? 'off',
     contextWindowRounds: aiConfig.contextWindowRounds,
     providers: aiConfig.providers,
     deletedProviders: aiConfig.deletedProviders ?? [],
@@ -253,13 +255,11 @@ function createWindow(): void {
 
   ipcMain.handle('settings:save', (_e, newCfg: typeof aiConfig) => {
     aiConfig.activeProvider = newCfg.activeProvider;
-    aiConfig.agentMode = newCfg.agentMode ?? 'off';
     aiConfig.contextWindowRounds = newCfg.contextWindowRounds;
     aiConfig.providers = newCfg.providers; // 完全替换
     aiConfig.deletedProviders = newCfg.deletedProviders ?? [];
     setSetting('llm_config', JSON.stringify({
       activeProvider: newCfg.activeProvider,
-      agentMode: newCfg.agentMode ?? 'off',
       contextWindowRounds: newCfg.contextWindowRounds,
       providers: newCfg.providers,
       deletedProviders: newCfg.deletedProviders ?? [],
@@ -323,6 +323,123 @@ function createWindow(): void {
       console.warn('[TTS] speak 失败:', (e as Error).message);
       return null;
     }
+  });
+
+  // ── WeChat 设置 ──────────────────────────────────────────────
+  ipcMain.handle('wechat:get', () => {
+    return {
+      enabled:         process.env['WECHAT_ENABLED'] === 'true',
+      token:           process.env['WECHAT_TOKEN'] ?? '',
+      accountId:       process.env['WECHAT_ACCOUNT_ID'] ?? '',
+      baseUrl:         process.env['WECHAT_BASE_URL'] ?? 'https://ilinkai.weixin.qq.com',
+      sendChunkDelay:  parseFloat(process.env['WECHAT_SEND_CHUNK_DELAY'] ?? '0.35'),
+    };
+  });
+
+  ipcMain.handle('wechat:status', () => {
+    return WeChatAdapter.activeAdapter !== null ? 'online' : 'offline';
+  });
+
+  ipcMain.handle('wechat:save', async (_e, cfg: {
+    enabled: boolean; token?: string; accountId?: string; baseUrl?: string; sendChunkDelay?: number;
+  }) => {
+    // 更新内存 env
+    process.env['WECHAT_ENABLED']         = String(cfg.enabled);
+    if (cfg.token) process.env['WECHAT_TOKEN'] = cfg.token;
+    if (cfg.accountId) process.env['WECHAT_ACCOUNT_ID'] = cfg.accountId;
+    if (cfg.baseUrl) process.env['WECHAT_BASE_URL'] = cfg.baseUrl;
+    if (cfg.sendChunkDelay !== undefined) {
+      process.env['WECHAT_SEND_CHUNK_DELAY'] = String(cfg.sendChunkDelay);
+    }
+
+    // 持久化到 .env 文件
+    try {
+      const fs = require('fs') as typeof import('fs');
+      const envPath = getEnvFilePath();
+      let envContent = '';
+      try { envContent = fs.readFileSync(envPath, 'utf-8'); } catch { }
+      const lines = envContent.split('\n').filter(l => !/^WECHAT_/.test(l.trim()));
+      lines.push(`WECHAT_ENABLED=${cfg.enabled}`);
+      if (cfg.token) lines.push(`WECHAT_TOKEN=${cfg.token}`);
+      if (cfg.accountId) lines.push(`WECHAT_ACCOUNT_ID=${cfg.accountId}`);
+      if (cfg.baseUrl) lines.push(`WECHAT_BASE_URL=${cfg.baseUrl}`);
+      if (cfg.sendChunkDelay !== undefined) {
+        lines.push(`WECHAT_SEND_CHUNK_DELAY=${cfg.sendChunkDelay}`);
+      }
+      fs.writeFileSync(envPath, lines.join('\n'), 'utf-8');
+    } catch (e) {
+      console.warn('[WeChat config] 写入 .env 失败（仅影响持久化）:', (e as Error).message);
+    }
+
+    // 重启 bridges
+    await stopBridges();
+    const convs = listConversations();
+    const convId = convs.length > 0 ? convs[0].id : createConversation().id;
+    await startBridges(convId).catch(e => console.error('[WeChat] 重启失败:', (e as Error).message));
+  });
+
+  ipcMain.handle('wechat:qr-login', async (event) => {
+    try {
+      for await (const state of qrLogin()) {
+        event.sender.send('wechat:qr-login-update', state);
+        if (state.status === 'confirmed' && state.credentials) {
+          // 保存凭证到 .env
+          const creds = state.credentials;
+          process.env['WECHAT_ENABLED']    = 'true';
+          process.env['WECHAT_TOKEN']      = creds.token;
+          process.env['WECHAT_ACCOUNT_ID'] = creds.accountId;
+          process.env['WECHAT_BASE_URL']   = creds.baseUrl;
+          
+          try {
+            const fs = require('fs') as typeof import('fs');
+            const envPath = getEnvFilePath();
+            let envContent = '';
+            try { envContent = fs.readFileSync(envPath, 'utf-8'); } catch { }
+            const lines = envContent.split('\n').filter(l => !/^WECHAT_/.test(l.trim()));
+            lines.push(`WECHAT_ENABLED=true`);
+            lines.push(`WECHAT_TOKEN=${creds.token}`);
+            lines.push(`WECHAT_ACCOUNT_ID=${creds.accountId}`);
+            lines.push(`WECHAT_BASE_URL=${creds.baseUrl}`);
+            fs.writeFileSync(envPath, lines.join('\n'), 'utf-8');
+          } catch (e) {
+            console.warn('[WeChat QR] 写入 .env 失败:', (e as Error).message);
+          }
+          
+          // 登录成功后自动启动 adapter
+          try {
+            await stopBridges();
+            const convs = listConversations();
+            const convId = convs.length > 0 ? convs[0].id : createConversation().id;
+            await startBridges(convId);
+            console.log('[WeChat QR] adapter 已自动启动');
+          } catch (e) {
+            console.error('[WeChat QR] 自动启动 adapter 失败:', (e as Error).message);
+          }
+          
+          return { success: true, credentials: creds };
+        } else if (state.status === 'error' || state.status === 'expired') {
+          return { success: false, error: state.error };
+        }
+      }
+      return { success: false, error: '登录超时' };
+    } catch (err) {
+      return { success: false, error: String(err) };
+    }
+  });
+
+  // ── Memory 导出/导入 ─────────────────────────────────────────
+  ipcMain.handle('memory:export', async () => {
+    const memory = getStructuredGlobalMemory();
+    return await exportMemoryToMarkdown(memory);
+  });
+
+  ipcMain.handle('memory:import', async () => {
+    const result = await importMemoryFromMarkdown();
+    if (result.success && result.content) {
+      // 导入成功，写入数据库
+      setStructuredGlobalMemory(result.content);
+    }
+    return result;
   });
 
   ipcMain.handle('tts:isEnabled', () => ttsService.isEnabled);

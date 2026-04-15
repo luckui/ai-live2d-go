@@ -23,6 +23,9 @@ import { ocrTools } from './impl/ocr';
 import runCommandTool from './impl/runCommand';
 import discordSendTool from './impl/discordSend';
 import readManualTool from './impl/manual';
+import manualManageTool from './impl/manual_manage';
+import memoryTool from './impl/memory';
+import todoTool from './impl/todo';
 import { skillList } from '../skills/index';
 import { setSkillRegistry } from '../skills/skillContext';
 
@@ -32,7 +35,10 @@ const registry = new ToolRegistry()
   .register(screenshotTool)
   .register(runCommandTool)
   .register(discordSendTool)
-  .register(readManualTool);
+  .register(readManualTool)
+  .register(manualManageTool)  // 说明书管理工具（AI 自我进化：创建/编辑工作流）
+  .register(memoryTool)  // 全局核心记忆工具（AI 主动管理用户画像）
+  .register(todoTool);   // 任务管理工具（会话级任务追踪）
 
 // 批量注册所有浏览器工具
 for (const tool of browserTools) {

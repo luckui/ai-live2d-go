@@ -109,13 +109,16 @@
                 <input id="s-rounds" type="number" min="1" max="200" class="s-input" />
                 <span class="s-hint">每次请求携带最近 N 轮上下文（1轮 = 1问1答，超出部分仍存数据库）</span>
               </label>
-              <label class="s-label">Agent 模式
-                <select id="s-agent-mode" class="s-input">
-                  <option value="off">关闭（默认）：普通聊天，不自动进入 Agent</option>
-                  <option value="force">强制：每条消息都走 Agent 自动规划执行</option>
-                </select>
-                <span class="s-hint">建议日常用“关闭”，需要全自动时再切到“强制”</span>
-              </label>
+            </section>
+
+            <!-- 全局核心记忆 -->
+            <section class="s-section">
+              <h3 class="s-title">全局核心记忆</h3>
+              <div class="s-row-2">
+                <button id="memory-export-btn" class="s-small-btn">📤 导出记忆</button>
+                <button id="memory-import-btn" class="s-small-btn">📥 导入记忆</button>
+              </div>
+              <span class="s-hint">导出为 Markdown 文件以便手动编辑用户画像和环境配置信息。格式：USER（用户画像，上限 1100 字） + MEMORY（环境配置，上限 1800 字）</span>
             </section>
 
             <!-- 服务商列表 -->
@@ -250,9 +253,24 @@
               <!-- 左侧：平台列表 -->
               <ul id="s-bridges-list">
                 <li class="s-bridge-item s-bridge-active" data-bridge="discord">
-                  <span class="s-bridge-icon">💬</span>
+                  <span class="s-bridge-icon">
+                    <svg viewBox="0 0 1024 1024" width="16" height="16">
+                      <path d="M685.568 546.773333c0-36.394667-28.074667-66.133333-62.890667-66.133333v0.170667c-34.517333 0-62.805333 29.610667-62.890666 66.261333 0 36.352 28.245333 66.048 62.890666 66.048 34.645333 0 62.890667-29.696 62.890667-66.346667zM460.373333 546.773333c0-36.394667-27.989333-66.133333-62.677333-66.133333l-0.170667 0.170667c-34.688 0-62.890667 29.610667-62.890666 66.261333 0 36.352 28.202667 66.048 62.890666 66.048 34.645333 0 62.890667-29.696 62.890667-66.346667z" fill="#BC8CF2"></path>
+                      <path d="M512 1024c282.752 0 512-229.248 512-512S794.752 0 512 0 0 229.248 0 512s229.248 512 512 512z m101.888-761.856h0.469333l-0.042666-0.170667-0.426667 0.170667z m-1.578667 0.554667l0.554667-0.554667h1.024l-1.578667 0.554667z m-0.298666 0.256h-0.469334l0.768-0.256-0.298666 0.256z m0 0c14.634667 0.085333 89.6 2.986667 169.642666 62.421333 0 0 89.856 155.989333 89.856 347.605333-0.512-0.64-2.688 1.621333-6.656 5.802667-18.090667 18.944-73.642667 77.226667-184.96 79.658667 0 0-23.04-26.453333-39.381333-49.493334 79.488-23.168 109.184-69.546667 109.184-69.546666-18.901333 12.117333-36.608 20.650667-52.266667 28.16-5.973333 2.901333-11.605333 5.632-16.896 8.362666-29.098667 12.970667-58.154667 19.498667-87.210666 26.026667l-1.962667 0.426667c-60.117333 9.941333-112.896 6.698667-158.933333 0a405.333333 405.333333 0 0 1-89.173334-26.496c-12.16-5.888-26.837333-11.946667-41.685333-18.048l-4.352-1.792c-1.450667 0-2.133333-0.682667-2.986667-1.450667v-0.341333l-0.085333-0.085334c-0.768-0.725333-1.450667-1.365333-2.858667-1.365333h-2.986666a164.352 164.352 0 0 0-16.554667-9.898667s29.696 46.336 105.941333 69.546667c-20.053333 23.168-39.850667 49.578667-39.850666 49.578667-135.808-3.285333-185.344-89.429333-185.344-89.429334 0-191.957333 89.386667-347.648 89.386666-347.648 89.386667-66.048 172.16-62.890667 172.16-62.890666l6.698667 6.698666c-109.354667 26.496-158.976 76.117333-158.976 76.117334s13.269333-6.570667 36.394667-16.64c66.389333-26.453333 115.882667-36.394667 139.178666-36.394667h9.898667c36.394667-3.157333 79.488-6.698667 122.538667 0 59.648 6.698667 119.253333 23.210667 185.429333 56.32 0 0-49.664-46.421333-152.32-76.117333l9.130667-9.088z" fill="#BC8CF2"></path>
+                    </svg>
+                  </span>
                   <span class="s-bridge-name">Discord</span>
                   <span id="dc-list-dot" class="s-bridge-dot s-status-off"></span>
+                </li>
+                <li class="s-bridge-item" data-bridge="wechat">
+                  <span class="s-bridge-icon">
+                    <svg viewBox="0 0 1024 1024" width="16" height="16">
+                      <path d="M1024 619.52c0-143.36-138.24-256-307.2-256s-307.2 112.64-307.2 256 138.24 256 307.2 256c30.72 0 61.44-5.12 92.16-10.24l97.28 51.2-25.6-76.8c87.04-51.2 143.36-128 143.36-220.16z m-414.72-40.96c-30.72 0-51.2-20.48-51.2-51.2s20.48-51.2 51.2-51.2 51.2 20.48 51.2 51.2c0 25.6-25.6 51.2-51.2 51.2z m209.92 0c-30.72 0-51.2-20.48-51.2-51.2s20.48-51.2 51.2-51.2 51.2 20.48 51.2 51.2c0 25.6-25.6 51.2-51.2 51.2z" fill="#4CBF00"></path>
+                      <path d="M358.4 609.28c0-158.72 153.6-286.72 348.16-286.72h15.36c-40.96-133.12-179.2-235.52-353.28-235.52-204.8 0-368.64 138.24-368.64 307.2 0 107.52 66.56 204.8 168.96 256l-30.72 92.16L256 686.08c35.84 10.24 71.68 15.36 112.64 15.36h10.24c-15.36-30.72-20.48-61.44-20.48-92.16z m138.24-414.72c35.84 0 66.56 30.72 66.56 66.56s-30.72 66.56-66.56 66.56C460.8 322.56 430.08 291.84 430.08 256S460.8 194.56 496.64 194.56zM245.76 322.56c-35.84 0-61.44-30.72-61.44-66.56s30.72-66.56 66.56-66.56 61.44 30.72 61.44 66.56-30.72 66.56-66.56 66.56z" fill="#4CBF00"></path>
+                    </svg>
+                  </span>
+                  <span class="s-bridge-name">WeChat</span>
+                  <span id="wc-list-dot" class="s-bridge-dot s-status-off"></span>
                 </li>
                 <!-- 未来在此追加：Telegram、QQ 等 -->
               </ul>
@@ -306,6 +324,66 @@
                   </div>
 
                 </div><!-- /#s-bridge-discord -->
+
+                <!-- ── WeChat 配置面板 ── -->
+                <div id="s-bridge-wechat" class="s-bridge-pane s-bridge-pane-hidden">
+
+                  <section class="s-section">
+                    <h3 class="s-title">Bot 连接</h3>
+                    <label class="s-label s-label-row">
+                      <span class="s-label-text">启用 WeChat Bot</span>
+                      <label class="s-toggle">
+                        <input type="checkbox" id="wc-enabled" />
+                        <span class="s-toggle-slider"></span>
+                      </label>
+                    </label>
+                  </section>
+
+                  <!-- 二维码登录区域 -->
+                  <section class="s-section" id="wc-qr-section">
+                    <h3 class="s-title">扫码登录</h3>
+                    <div class="s-hint">首次使用请点击下方按钮，使用微信扫描二维码完成授权</div>
+                    <div id="wc-qr-container" style="text-align: center; margin: 1rem 0;">
+                      <button id="wc-qr-start-btn" class="s-save-btn">🔑 启动二维码登录</button>
+                      <div id="wc-qr-display" style="display: none; margin-top: 1rem;">
+                        <div id="wc-qr-status" style="margin-bottom: 0.5rem; color: #666;">等待扫码...</div>
+                        <img id="wc-qr-img" style="max-width: 200px; border: 1px solid #ddd; border-radius: 8px;" />
+                      </div>
+                    </div>
+                  </section>
+
+                  <!-- 账号信息区域（登录成功后显示） -->
+                  <section class="s-section" id="wc-account-section" style="display: none;">
+                    <h3 class="s-title">账号信息</h3>
+                    <label class="s-label">Account ID
+                      <input id="wc-account-id" type="text" class="s-input" readonly style="background: #f5f5f5;" />
+                    </label>
+                    <label class="s-label">Token（前8位）
+                      <input id="wc-token-preview" type="text" class="s-input" readonly style="background: #f5f5f5;" />
+                    </label>
+                  </section>
+
+                  <section class="s-section">
+                    <h3 class="s-title">高级设置</h3>
+                    <label class="s-label">消息分片延迟（秒）
+                      <input id="wc-chunk-delay" type="number" class="s-input" min="0" max="5" step="0.1" value="0.35" />
+                      <span class="s-hint">发送多条消息时的间隔时间，避免触发速率限制</span>
+                    </label>
+                  </section>
+
+                  <section class="s-section">
+                    <h3 class="s-title">Bot 状态</h3>
+                    <div class="s-status-row">
+                      <span id="wc-status-dot" class="s-status-dot s-status-off"></span>
+                      <span id="wc-status-text">未启动</span>
+                    </div>
+                  </section>
+
+                  <div class="s-save-row">
+                    <button id="wc-save-btn" class="s-save-btn">保存并重启 Bot</button>
+                  </div>
+
+                </div><!-- /#s-bridge-wechat -->
 
               </div><!-- /#s-bridges-detail -->
             </div><!-- /#s-bridges-layout -->

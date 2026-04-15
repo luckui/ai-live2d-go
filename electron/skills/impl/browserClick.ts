@@ -23,6 +23,7 @@
 
 import type { ToolDefinition, ToolExecuteResult, SkillPauseResult, SkillContinueResult } from '../../tools/types';
 import { browserSession } from '../../tools/impl/browserSession';
+import { readPageSummary } from '../../tools/impl/browser';
 
 interface BrowserClickSmartParams {
   /** 按钮/链接描述；支持多同义词（逗号/斜杠/分号分隔），如"搜索,search,查找" */
@@ -221,7 +222,8 @@ async function executeClickByIdx(
     steps.push(`Playwright click: ✅`);
     await cleanupIdx(page);
     await waitSettle(2000);
-    return `✅ 已点击"${label}"\n执行轨迹：\n${steps.map(s => '  ' + s).join('\n')}`;
+    const pageSummary = await readPageSummary('brief');
+    return `✅ 已点击"${label}"\n执行轨迹：\n${steps.map(s => '  ' + s).join('\n')}\n\n【点击后页面概览】\n${pageSummary}`;
   } catch (e) {
     steps.push(`Playwright click: ❌ ${(e as Error).message.slice(0, 80)}`);
   }
@@ -232,7 +234,8 @@ async function executeClickByIdx(
     steps.push(`Force click: ✅`);
     await cleanupIdx(page);
     await waitSettle(2000);
-    return `✅ 已点击"${label}"\n执行轨迹：\n${steps.map(s => '  ' + s).join('\n')}`;
+    const pageSummary = await readPageSummary('brief');
+    return `✅ 已点击"${label}"\n执行轨迹：\n${steps.map(s => '  ' + s).join('\n')}\n\n【点击后页面概览】\n${pageSummary}`;
   } catch (e) {
     steps.push(`Force click: ❌ ${(e as Error).message.slice(0, 80)}`);
   }
@@ -248,7 +251,8 @@ async function executeClickByIdx(
     steps.push(`JS el.click(): ✅`);
     await cleanupIdx(page);
     await waitSettle(2000);
-    return `✅ 已点击"${label}"\n执行轨迹：\n${steps.map(s => '  ' + s).join('\n')}`;
+    const pageSummary = await readPageSummary('brief');
+    return `✅ 已点击"${label}"\n执行轨迹：\n${steps.map(s => '  ' + s).join('\n')}\n\n【点击后页面概览】\n${pageSummary}`;
   } catch (e) {
     steps.push(`JS el.click(): ❌ ${(e as Error).message.slice(0, 80)}`);
   }

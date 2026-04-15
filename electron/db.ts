@@ -99,6 +99,48 @@ export function setSetting(key: string, value: string): void {
   db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run(key, value);
 }
 
+// ── 结构化全局记忆（Hermes 风格分块）──────────────────────
+
+/** 结构化记忆接口（Hermes 风格：USER + MEMORY 双文件） */
+export interface StructuredGlobalMemory {
+  /** 用户画像（偏好、习惯、沟通风格） */
+  user: string[];
+  /** 环境配置和工具经验（系统信息、工具特性、项目约定） */
+  memory: string[];
+}
+
+/** 读取结构化全局记忆（返回条目数组）
+ * 【兼容性】如果结构化字段为空，fallback 到旧 global_memory 字段 */
+export function getStructuredGlobalMemory(): StructuredGlobalMemory {
+  const userRaw = getSetting('global_memory_user');
+  const memoryRaw = getSetting('global_memory_main');
+  
+  const user = userRaw ? userRaw.split('§').map(s => s.trim()).filter(Boolean) : [];
+  const memory = memoryRaw ? memoryRaw.split('§').map(s => s.trim()).filter(Boolean) : [];
+  
+  // 如果结构化字段都为空，fallback 到旧的 global_memory
+  if (user.length === 0 && memory.length === 0) {
+    const legacy = getSetting('global_memory');
+    if (legacy?.trim()) {
+      // 将旧记忆临时归入 MEMORY 块（环境配置）
+      return { user: [], memory: [legacy.trim()] };
+    }
+  }
+  
+  return { user, memory };
+}
+
+/** 写入结构化全局记忆（条目数组）
+ * 【兼容性】同时更新旧 global_memory 字段，保持 memory tool 可读性 */
+export function setStructuredGlobalMemory(data: StructuredGlobalMemory): void {
+  setSetting('global_memory_user', data.user.join('§'));
+  setSetting('global_memory_main', data.memory.join('§'));
+  
+  // 同步写入旧字段（memory tool 兼容性）
+  const allEntries = [...data.user, ...data.memory];
+  setSetting('global_memory', allEntries.join('§'));
+}
+
 // ── 对话 CRUD ─────────────────────────────────────────────
 
 export function createConversation(title = '新对话'): Conversation {
@@ -237,7 +279,7 @@ export function setMemoryCursor(conversationId: string, cursor: number): void {
 
 // ── 全局核心记忆 ──────────────────────────────────────────
 
-/** 读取全局核心记忆文本（不存在时返回 null） */
+/** 读取全局核心记忆文本（不存在时返回 null）【遗留 API，建议迁移到 getStructuredGlobalMemory】 */
 export function getGlobalMemory(): string | null {
   return getSetting('global_memory');
 }

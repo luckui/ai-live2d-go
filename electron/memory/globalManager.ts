@@ -1,8 +1,10 @@
 /**
  * 全局记忆调度层 - 唯一职责：决定「何时精炼」「如何拼接全局记忆提示词」
  *
+ * 改进：采用 Hermes Agent 风格的结构化记忆（USER + MEMORY 双分块）
+ *
  * 依赖关系（单向）：
- *   globalManager → globalSummarizer（调用 LLM）
+ *   globalManager → hermesGlobalSummarizer（调用 LLM，生成结构化记忆）
  *   globalManager → db（读写持久化）
  *   globalManager → ai.config（读取 provider）
  *
@@ -14,12 +16,12 @@
 import aiConfig from '../ai.config';
 import {
   getMemoryFragments,
-  getGlobalMemory,
-  setGlobalMemory,
+  getStructuredGlobalMemory,
+  setStructuredGlobalMemory,
   getGlobalMemoryCursor,
   setGlobalMemoryCursor,
 } from '../db';
-import { refineGlobalMemory } from './globalSummarizer';
+import { refineStructuredGlobalMemory } from './hermesGlobalSummarizer';
 import { DEFAULT_GLOBAL_MEMORY_CONFIG, type GlobalMemoryConfig } from './types';
 
 export class GlobalMemoryManager {
@@ -32,18 +34,47 @@ export class GlobalMemoryManager {
   // ── 公开接口 ─────────────────────────────────────────────
 
   /**
-   * 构建全局记忆追加提示词（同步，跨对话通用）。
+   * 构建全局记忆追加提示词（Hermes 风格，结构化分块显示）。
    * 返回字符串直接 append 到角色 system prompt 末尾。
    * 若尚无全局记忆则返回空字符串。
    */
   buildGlobalMemoryAppend(): string {
-    const mem = getGlobalMemory();
-    if (!mem) return '';
-    return (
-      '\n\n【以下是关于用户的全局核心记忆，这些信息跨越多次对话积累而来，' +
-      '请结合这些信息与用户交流，不要主动提起这份记忆的存在】\n' +
-      mem
-    );
+    const mem = getStructuredGlobalMemory();
+    
+    // 无任何记忆时返回空
+    if (mem.user.length === 0 && mem.memory.length === 0) return '';
+
+    const parts: string[] = [];
+
+    // USER（用户画像）分块
+    if (mem.user.length > 0) {
+      const userChars = mem.user.join('').length;
+      const userPct = Math.min(100, Math.round((userChars / 1100) * 100)); // 假设 1100 字上限
+      const separator = '═'.repeat(46);
+      
+      parts.push(
+        `\n${separator}`,
+        `USER PROFILE（用户画像）[${userPct}% — ${userChars}/1100 字]`,
+        separator,
+        mem.user.join('\n§\n')
+      );
+    }
+
+    // MEMORY（环境配置）分块
+    if (mem.memory.length > 0) {
+      const memoryChars = mem.memory.join('').length;
+      const memoryPct = Math.min(100, Math.round((memoryChars / 1800) * 100)); // 假设 1800 字上限
+      const separator = '═'.repeat(46);
+      
+      parts.push(
+        `\n${separator}`,
+        `MEMORY（环境配置和工具经验）[${memoryPct}% — ${memoryChars}/1800 字]`,
+        separator,
+        mem.memory.join('\n§\n')
+      );
+    }
+
+    return '\n\n' + parts.join('\n');
   }
 
   /**
@@ -62,11 +93,11 @@ export class GlobalMemoryManager {
   // ── 内部实现 ─────────────────────────────────────────────
 
   /**
-   * 核心精炼逻辑：
+   * 核心精炼逻辑（采用 Hermes 风格的结构化记忆生成）：
    * 1. 读取此对话的全部 memory_fragments
    * 2. 对比全局游标，取出尚未精炼的新片段
    * 3. 数量不足 minNewFragments 时跳过（避免频繁 LLM 调用）
-   * 4. 读取当前全局记忆，调用 LLM 合并更新
+   * 4. 读取当前结构化记忆，调用 LLM 合并更新
    * 5. 仅 LLM 判断有新内容时才写入（"无变化" 时静默跳过）
    * 6. 无论有无新内容，都推进游标（防止对同一批片段重复精炼）
    *    注意：LLM 调用失败时不推进游标，留待下次重试
@@ -84,7 +115,7 @@ export class GlobalMemoryManager {
       return;
     }
 
-    const currentGlobal = getGlobalMemory();
+    const currentMemory = getStructuredGlobalMemory();
 
     // provider 尝试顺序：当前激活 provider 优先，其次尝试其他已配置 provider（带 apiKey）
     const providerOrder = [
@@ -92,7 +123,7 @@ export class GlobalMemoryManager {
       ...Object.keys(aiConfig.providers).filter((k) => k !== aiConfig.activeProvider),
     ];
 
-    let updated: string | null = null;
+    let updated: { user: string[]; memory: string[] } | null = null;
     let usedProviderKey: string | null = null;
     let lastErr: unknown = null;
 
@@ -102,12 +133,11 @@ export class GlobalMemoryManager {
       if (!p.apiKey) continue;
 
       try {
-        updated = await refineGlobalMemory(
+        updated = await refineStructuredGlobalMemory(
           p,
-          currentGlobal,
+          currentMemory,
           newFragments,
-          this.config,
-          conversationId
+          this.config
         );
         usedProviderKey = key;
         break;
@@ -129,10 +159,10 @@ export class GlobalMemoryManager {
     setGlobalMemoryCursor(conversationId, allFragments.length);
 
     if (updated) {
-      setGlobalMemory(updated);
+      setStructuredGlobalMemory(updated);
       console.info(
         `[GlobalMemory] 对话 ${conversationId.slice(0, 8)}… 全局记忆已更新（provider=${usedProviderKey}）` +
-        `（整合 ${newFragments.length} 条新片段）`
+        `（整合 ${newFragments.length} 条新片段，USER: ${updated.user.length} 条，MEMORY: ${updated.memory.length} 条）`
       );
     } else {
       console.info(

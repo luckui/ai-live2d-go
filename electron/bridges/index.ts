@@ -12,6 +12,7 @@
 
 import { loadBridgeConfig } from './bridge.config';
 import { DiscordAdapter } from './adapters/discord';
+import { WeChatAdapter } from './adapters/wechat';
 
 interface Adapter {
   name: string;
@@ -43,6 +44,23 @@ export async function startBridges(conversationId: string): Promise<void> {
       activeAdapters.push({ name: 'discord', start: () => adapter.start(), stop: () => adapter.stop() });
       await adapter.start().catch(e =>
         console.error('[Bridges] Discord 启动失败:', (e as Error).message)
+      );
+    }
+  }
+
+  // ── WeChat ───────────────────────────────────────────────────────
+  if (bridgeConfig.wechat.enabled) {
+    if (!bridgeConfig.wechat.token && !bridgeConfig.wechat.accountId) {
+      console.warn('[Bridges] WeChat 已启用但未配置 token/accountId，请先通过 UI 完成二维码登录');
+    } else {
+      // 注入对话 ID
+      if (!bridgeConfig.wechat.conversationId) {
+        bridgeConfig.wechat.conversationId = conversationId;
+      }
+      const adapter = new WeChatAdapter(bridgeConfig.wechat);
+      activeAdapters.push({ name: 'wechat', start: () => adapter.start(), stop: () => adapter.stop() });
+      await adapter.start().catch(e =>
+        console.error('[Bridges] WeChat 启动失败:', (e as Error).message)
       );
     }
   }

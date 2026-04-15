@@ -66,11 +66,38 @@ const SCREENSHOT_MAX_WIDTH = 1280;
 
 // ── 辅助函数 ──────────────────────────────────────────────────────
 
-/** 等待页面加载稳定，超时不报错 */
-async function waitSettle(ms = 5000): Promise<void> {
+/** 
+ * 等待页面加载稳定（改进：支持动态渲染页面）
+ * 
+ * 策略：
+ *   1. 先等待 domcontentloaded（HTML 解析完成）
+ *   2. 再等待 networkidle（网络请求基本完成，适合 SPA）
+ *   3. 如果 networkidle 超时，回退到检测主内容区是否出现
+ * 
+ * @param ms - 总超时时间（默认 8 秒，给 SPA 更多时间）
+ */
+async function waitSettle(ms = 8000): Promise<void> {
   const page = browserSession.currentPage;
   if (!page) return;
-  await page.waitForLoadState('domcontentloaded', { timeout: ms }).catch(() => {});
+
+  // 步骤 1: 等待 DOM 解析完成（快速）
+  await page.waitForLoadState('domcontentloaded', { timeout: 3000 }).catch(() => {});
+
+  // 步骤 2: 尝试等待网络空闲（适合 SPA 动态加载内容）
+  const networkIdleSuccess = await page
+    .waitForLoadState('networkidle', { timeout: ms - 3000 })
+    .then(() => true)
+    .catch(() => false);
+
+  if (networkIdleSuccess) return;
+
+  // 步骤 3: 回退策略 - 显式等待主内容区出现（针对 React/Vue SPA）
+  await page
+    .waitForSelector('main,article,[role=main],#app > *,#root > *,.content', { timeout: 2000 })
+    .catch(() => {});
+
+  // 额外等待 500ms 让动态内容稳定
+  await new Promise((resolve) => setTimeout(resolve, 500));
 }
 
 /** 返回当前页面简短状态描述（含 tab 索引） */
@@ -522,8 +549,13 @@ const browserReadPage: ToolDefinition<ReadPageParams> = {
 
     const result = await readPageSummary(detail);
 
-    // 截图建议：分两档
+    // 检测 SPA 特征（URL 带 # 路由，或检测到 React/Vue）
+    const url = page.url();
+    const isSPA = url.includes('#/') || url.includes('#!/');
+    
+    // 截图建议：分三档
     //   极贫乏（无大纲+无链接）→ 强烈建议
+    //   SPA 且内容少 → 强烈建议（可能是动态渲染、视频、Canvas）
     //   内容一般（链接/大纲数量少，或 full 模式无正文）→ 轻度建议
     const hasOutline = result.includes('【页面大纲');
     const hasLinks = result.includes('【主内容链接');
@@ -532,17 +564,23 @@ const browserReadPage: ToolDefinition<ReadPageParams> = {
     const isSparse = !isThin && (result.length < 350 || (detail === 'full' && !hasBody));
 
     if (isThin) {
+      const spaHint = isSPA
+        ? '（检测到单页应用路由 #/，页面可能通过 JavaScript 动态渲染视频/Canvas/图片等非文本内容）'
+        : '（可能是纯图片/Canvas/动态渲染页面）';
       return (
         result +
-        '\n\n⚠️ 页面文本信息极少（可能是纯图片/Canvas/动态渲染页面）。' +
+        `\n\n⚠️ 页面文本信息极少${spaHint}。` +
         '\n强烈建议立即调用 browser_screenshot 截图，根据画面视觉内容继续决策。'
       );
     }
 
-    if (isSparse) {
+    if (isSparse || isSPA) {
+      const spaHint = isSPA
+        ? '\n（检测到单页应用路由 #/，内容可能在等待后仍以视觉形式呈现，文本提取有限）'
+        : '';
       return (
         result +
-        '\n\n💡 页面结构信息有限，若以上内容不足以判断下一步操作，' +
+        `\n\n💡 页面结构信息有限${spaHint}，若以上内容不足以判断下一步操作，` +
         '请调用 browser_screenshot 截图直观确认页面状态。'
       );
     }

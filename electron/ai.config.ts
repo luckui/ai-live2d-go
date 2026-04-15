@@ -31,8 +31,40 @@ export interface LLMProviderConfig {
    * 对应 volcengine/ark API 的 `thinking.budget_tokens` 字段。
    * 设为 0 表示关闭 thinking（等价 type:"disabled"）。
    * 不设则不发此字段（模型默认行为）。
+   *
+   * ⚠️ 智能兼容性检测：
+   * 系统会根据模型名称自动判断是否支持 thinking 参数，即使配置了此字段，
+   * 如果模型名称不包含 seed/reasoner/r1/thinking，也不会发送 thinking 参数。
+   *
+   * 支持 thinking 的模型关键词：
+   *   - doubao-seed / doubao-pro-seed（字节豆包推理模型）
+   *   - deepseek-reasoner / deepseek-r1（DeepSeek R1）
+   *   - qwen-plus-thinking / qwen-max-thinking（阿里云 Qwen 推理版）
+   *
+   * 不支持的常见模型（会被自动过滤）：
+   *   - doubao-pro-4k / doubao-lite-4k（豆包标准模型）
+   *   - deepseek-chat（DeepSeek 对话模型）
+   *   - gpt-4o / gpt-4o-mini（OpenAI）
+   *   - glm-4-xxx（智谱 GLM）
    */
   thinkingBudgetTokens?: number;
+  /**
+   * 启用的工具集列表（新架构，借鉴 hermes-agent）
+   *
+   * 控制该 provider 可见哪些工具。支持：
+   *   - 预定义 toolset 名称（在 toolsets.ts 中定义）
+   *   - "default"：智能工具集（browser-smart + file-smart + terminal-smart...）
+   *   - "debugging"：调试模式（暴露所有底层工具）
+   *
+   * 未设置则默认使用 ["default"]。
+   *
+   * @example
+   * ```ts
+   * enabledToolsets: ["browser-smart", "file-smart", "terminal-smart"]
+   * enabledToolsets: ["debugging"]  // 调试模式，暴露底层工具
+   * ```
+   */
+  enabledToolsets?: string[];
   /**
    * 额外透传到 API 的请求体字段（优先级最高）。
    * 可用于配置服务商特有参数（如自定义 stop 序列、response_format 等）。
@@ -64,15 +96,13 @@ const aiConfig: AIConfig = {
   providers: {
     doubao: {
       type: 'openai-compatible',
-      name: '豆包 Seed',
+      name: '豆包',
       baseUrl: 'https://ark.cn-beijing.volces.com/api/v3',
       apiKey: process.env['DOUBAO_API_KEY'] ?? '',
-      model: 'doubao-seed-1-8-251228',
+      model: 'doubao-pro-4k',
       temperature: 0.85,
       maxTokens: 1024,
-      // doubao-seed 是推理模型，thinking tokens 计费。
-      // 限制推理预算可大幅降低单轮消耗（默认 2048，可上调至 4096 以许更复杂的工具调用）。
-      thinkingBudgetTokens: 2048,
+      enabledToolsets: ['default'],  // 智能工具集（browser-smart + file-smart + terminal-smart...）
       systemPrompt: buildSystemPrompt(),
     },
 
@@ -87,6 +117,7 @@ const aiConfig: AIConfig = {
       // Qwen3 系列默认开启 thinking，4B 小模型思考收益有限且占满 max_tokens。
       // vLLM 必须通过 chat_template_kwargs 传递，顶层 enable_thinking 字段会被忽略。
       extraParams: { chat_template_kwargs: { enable_thinking: false } },
+      enabledToolsets: ['default'],  // 智能工具集
       systemPrompt: buildSystemPrompt(),
     },
 

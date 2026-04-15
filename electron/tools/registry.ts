@@ -1,16 +1,21 @@
 import type { ToolDefinition, ToolSchema, ToolExecuteResult, ToolImageResult } from './types';
 import { isSkillPauseResult, isSkillContinueResult } from './types';
+import { resolveToolset } from '../toolsets';
 
 /**
  * 工具注册中心
  *
  * 统一管理所有工具的注册与执行，解耦 LLM 调用循环与具体工具实现。
  *
+ * 核心改进（借鉴 hermes-agent）：
+ *   - 使用 Toolset 系统替代 hideWhenSkills（声明式、可组合、语义化）
+ *   - 支持 checkAvailable() 运行时条件检测（API key 不存在时自动隐藏工具）
+ *
  * @example
  * ```ts
- * registry.register(myTool);             // 注册
- * registry.getSchemas();                 // → 传给 LLM 的 tools 数组
- * await registry.execute(name, argsJson); // 执行工具调用
+ * registry.register(myTool);                           // 注册
+ * registry.getSchemasForToolset("browser-smart");      // → 智能工具集
+ * await registry.execute(name, argsJson);              // 执行工具调用
  * ```
  */
 export class ToolRegistry {
@@ -28,9 +33,16 @@ export class ToolRegistry {
     return this.tools.size === 0;
   }
 
-  /** 获取所有工具的 schema 列表，用于注入 LLM 请求的 `tools` 字段 */
+  /** 获取所有已注册工具的名称集合（用于验证记忆条目中的工具名） */
+  getToolNames(): ReadonlySet<string> {
+    return new Set(this.tools.keys());
+  }
+
+  /** 获取所有工具的 schema 列表（不推荐，优先使用 getSchemasForToolset） */
   getSchemas(): ToolSchema[] {
-    return [...this.tools.values()].map((t) => t.schema);
+    return [...this.tools.values()]
+      .filter(t => !t.checkAvailable || t.checkAvailable())  // 运行时条件检测
+      .map((t) => t.schema);
   }
 
   /**
@@ -40,20 +52,53 @@ export class ToolRegistry {
   getSchemasExcluding(names: string[]): ToolSchema[] {
     return [...this.tools.values()]
       .filter((t) => !names.includes(t.schema.function.name))
+      .filter(t => !t.checkAvailable || t.checkAvailable())  // 运行时条件检测
       .map((t) => t.schema);
   }
 
   /**
-   * Skill 优先模式下的 schema 列表
+   * 根据 Toolset 获取工具 schema 列表（新架构，推荐使用）
    *
-   * 当注册表中存在 isSkill=true 的工具时，使用"skill-first"模式：
-   *   - 所有 Skill（isSkill=true）永远暴露给 AI
-   *   - 底层原子工具中，excludeWhenSkills 列表内的工具会被隐藏（减少 AI 选择压力）
-   *   - excludeWhenSkills 未传则默认隐藏所有 sys_* 原子工具（因为它们由 Skill 内部调用）
+   * 设计理念：
+   *   - 声明式：工具分组在 toolsets.ts 集中定义，不在各工具代码中分散标记
+   *   - 可组合：toolset 支持嵌套（debugging = browser-full + file + terminal）
+   *   - 条件过滤：checkAvailable() 运行时检测（API key 不存在时自动隐藏）
    *
-   * @param excludeWhenSkills 有 Skill 时要隐藏的原子工具名列表；
-   *                          传 [] 表示不隐藏任何工具；
-   *                          不传则自动隐藏 sys_* 前缀的工具
+   * @param toolsets - toolset 名称数组，如 ["browser-smart", "file-smart"]
+   * @returns 过滤后的工具 schema 数组
+   *
+   * @example
+   * ```ts
+   * // 默认模式（智能工具）
+   * registry.getSchemasForToolset(["default"]);
+   * // → browser_click_smart, browser_type_smart, write_file, open_terminal...
+   *
+   * // 调试模式（包含底层工具）
+   * registry.getSchemasForToolset(["debugging"]);
+   * // → browser_click, browser_type, browser_click_smart, ...
+   * ```
+   */
+  getSchemasForToolset(toolsets: string[]): ToolSchema[] {
+    // 1. 解析 toolset → 工具名集合
+    const allowedTools = new Set<string>();
+    for (const ts of toolsets) {
+      const tools = resolveToolset(ts);
+      for (const tool of tools) {
+        allowedTools.add(tool);
+      }
+    }
+
+    // 2. 过滤：只返回 toolset 包含 + checkAvailable 通过的工具
+    return [...this.tools.values()]
+      .filter(t => allowedTools.has(t.schema.function.name))       // toolset 白名单
+      .filter(t => !t.checkAvailable || t.checkAvailable())        // 运行时条件
+      .map(t => t.schema);
+  }
+
+  /**
+   * @deprecated 使用 getSchemasForToolset 替代
+   *
+   * Skill 优先模式下的 schema 列表（旧架构，保留兼容性）
    */
   getSchemasForMode(excludeWhenSkills?: string[]): ToolSchema[] {
     const all = [...this.tools.values()];
@@ -61,7 +106,9 @@ export class ToolRegistry {
 
     if (!hasSkills) {
       // 无 Skill 注册，全量暴露（与 getSchemas() 等价）
-      return all.map(t => t.schema);
+      return all
+        .filter(t => !t.checkAvailable || t.checkAvailable())  // 运行时条件检测
+        .map(t => t.schema);
     }
 
     // 有 Skill：按规则过滤原子工具
@@ -78,6 +125,7 @@ export class ToolRegistry {
         if (t.hideWhenSkills) return false;                  // 有 Skill 时隐藏
         return !toHide.has(t.schema.function.name);          // sys_* 等按名单隐藏
       })
+      .filter(t => !t.checkAvailable || t.checkAvailable())  // 运行时条件检测
       .map(t => t.schema);
   }
 
@@ -86,18 +134,19 @@ export class ToolRegistry {
    *
    * @param name     - 工具函数名（来自 LLM 响应的 tool_call.function.name）
    * @param argsJson - JSON 字符串（来自 LLM 响应的 tool_call.function.arguments）
+   * @param context  - 可选的执行上下文（如 conversationId）
    * @returns        - 工具执行结果：字符串或含图像的 ToolImageResult
    *                   SkillPauseResult 已在此处格式化为带 ⏸️ 标记的字符串，
    *                   调用方（aiService）无需感知暂停类型。
    */
-  async execute(name: string, argsJson: string): Promise<string | ToolImageResult> {
+  async execute(name: string, argsJson: string, context?: import('./types').ToolContext): Promise<string | ToolImageResult> {
     const tool = this.tools.get(name);
     if (!tool) {
       return `[工具错误] 未找到名为 "${name}" 的工具，已注册: ${[...this.tools.keys()].join(', ')}`;
     }
     try {
       const args = JSON.parse(argsJson) as Record<string, unknown>;
-      const result = await tool.execute(args);
+      const result = await tool.execute(args, context);
 
       // ── Skill 暂停：格式化为带 ⏸️ 标记的字符串，AI 按 systemPrompt 规范处理 ──
       if (isSkillPauseResult(result)) {

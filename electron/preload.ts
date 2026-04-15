@@ -52,6 +52,25 @@ contextBridge.exposeInMainWorld('ttsSettingsAPI', {
   test: (url: string)  => ipcRenderer.invoke('tts:config:test', url),
 });
 
+contextBridge.exposeInMainWorld('memoryAPI', {
+  export: () => ipcRenderer.invoke('memory:export'),
+  import: () => ipcRenderer.invoke('memory:import'),
+});
+
+contextBridge.exposeInMainWorld('wechatAPI', {
+  /** 获取 WeChat 配置 */
+  get: () => ipcRenderer.invoke('wechat:get'),
+  /** 保存 WeChat 配置 */
+  save: (cfg: unknown) => ipcRenderer.invoke('wechat:save', cfg),
+  /** 获取连接状态 */
+  getStatus: () => ipcRenderer.invoke('wechat:status'),
+  /** 启动二维码登录流程 */
+  startQRLogin: () => ipcRenderer.invoke('wechat:qr-login'),
+  /** 监听 QR 登录状态更新 */
+  onQRLoginUpdate: (cb: (state: unknown) => void) =>
+    ipcRenderer.on('wechat:qr-login-update', (_e, state) => cb(state)),
+});
+
 /** 应用退出相关事件 */
 contextBridge.exposeInMainWorld('appLifecycleAPI', {
   /** 开始退出流水线时触发（正在保存记忆） */

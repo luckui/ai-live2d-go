@@ -29,12 +29,12 @@ import type { ToolDefinition } from '../types';
 /**
  * 说明书目录路径（兼容开发模式和打包后）
  *
- * 开发时：__dirname = out/main/，往上三级到项目根，再进 electron/manual
- * 打包后：resources/ 下需要在 electron-builder 中将 electron/manual 加入 extraResources
+ * 开发时：app.getAppPath() 返回项目根目录
+ * 打包后：process.resourcesPath 指向 resources/ 目录（需在 electron-builder 中配置 extraResources）
  */
 const MANUAL_DIR = app.isPackaged
   ? path.join(process.resourcesPath, 'electron', 'manual')
-  : path.join(__dirname, '..', '..', 'electron', 'manual');
+  : path.join(app.getAppPath(), 'electron', 'manual');
 
 /** 读取 manual 目录下所有 .md 文件，返回 { name, firstLine } 列表 */
 function listTopics(): Array<{ name: string; summary: string }> {
@@ -145,11 +145,20 @@ const readManualTool: ToolDefinition<ReadManualParams> = {
         '【何时调用】\n' +
         '  • 不确定某个命令/操作的正确写法时（如 Windows 磁盘查询、conda 操作等）\n' +
         '  • run_command 或其他工具执行失败，需要查阅正确用法时\n' +
+        '  • 调试超过 3 次仍未解决时，查阅"系统化调试工作流"方法论\n' +
+        '  • 实现新功能或修复 bug 前，查阅"测试驱动开发"了解 TDD 流程\n' +
+        '  • 复杂任务需要分解时，查阅"任务规划工作流"指导\n' +
         '  • 用户提到"按说明书操作"、"翻一下手册"时\n' +
+        '【可用主题】\n' +
+        '  命令行操作、浏览器操作、Python环境、系统化调试工作流、测试驱动开发、任务规划工作流\n' +
+        '【何时创建新说明书】\n' +
+        '  复杂任务成功完成后（5+ 工具调用、多次迭代、克服错误），主动询问用户是否将工作流程保存为新说明书。\n' +
+        '  使用 manual_manage 工具创建。保存前必须征得用户同意。\n' +
+        '  跳过简单的一次性任务。优先考虑可复用的流程、用户纠正过的方法、非平凡的工作流。\n' +
         '【用法】\n' +
         '  不传 topic → 列出所有可用主题（先看目录，再决定读哪一篇）\n' +
         '  传 topic   → 返回该主题的完整说明书内容\n' +
-        '主题名支持模糊匹配，如 topic="命令" 可匹配"命令行操作.md"。',
+        '主题名支持模糊匹配，如 topic="调试" 可匹配"系统化调试工作流.md"。',
       parameters: {
         type: 'object',
         properties: {

@@ -28,8 +28,23 @@ export interface DiscordBridgeConfig {
   proxyUrl: string;
 }
 
+export interface WeChatBridgeConfig {
+  enabled: boolean;
+  /** iLink Bot Token（扫码登录后自动保存，首次运行使用 UI 扫码） */
+  token: string;
+  /** iLink Account ID */
+  accountId: string;
+  /** iLink API Base URL */
+  baseUrl: string;
+  /** 绑定的对话 ID */
+  conversationId: string;
+  /** 消息分片延迟（秒），WeChat 有速率限制 */
+  sendChunkDelay: number;
+}
+
 export interface BridgeConfig {
   discord: DiscordBridgeConfig;
+  wechat: WeChatBridgeConfig;
   // telegram: TelegramBridgeConfig;  // 以后加
 }
 
@@ -59,12 +74,22 @@ export function loadBridgeConfig(): BridgeConfig {
       conversationId:  process.env['DISCORD_CONVERSATION_ID'] ?? '',
       proxyUrl:        process.env['DISCORD_PROXY'] ?? '',
     },
+    wechat: {
+      enabled:         parseBool(process.env['WECHAT_ENABLED']),
+      token:           process.env['WECHAT_TOKEN'] ?? '',
+      accountId:       process.env['WECHAT_ACCOUNT_ID'] ?? '',
+      baseUrl:         process.env['WECHAT_BASE_URL'] ?? 'https://ilinkai.weixin.qq.com',
+      conversationId:  process.env['WECHAT_CONVERSATION_ID'] ?? '',
+      sendChunkDelay:  parseFloat(process.env['WECHAT_SEND_CHUNK_DELAY'] ?? '0.35'),
+    },
   };
   console.log('[Bridges] 配置加载:', {
     discordEnabled: cfg.discord.enabled,
     hasToken:       !!cfg.discord.token,
     tokenLen:       cfg.discord.token.length,
     proxy:          cfg.discord.proxyUrl || '(无代理)',
+    wechatEnabled:  cfg.wechat.enabled,
+    wechatToken:    cfg.wechat.token ? `***${cfg.wechat.token.slice(-8)}` : '(未配置)',
   });
   return cfg;
 }

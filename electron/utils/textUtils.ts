@@ -30,6 +30,7 @@ export function stripThinkTags(text: string): string {
  * summarizer / globalSummarizer 和 aiService 均需传入，避免推理模型泄漏思考内容。
  */
 export function buildProviderExtraBody(provider: {
+  model?: string;
   thinkingBudgetTokens?: number;
   extraParams?: Record<string, unknown>;
 }): Record<string, unknown> {
@@ -48,11 +49,36 @@ export function buildProviderExtraBody(provider: {
     delete extra['enable_thinking'];
   }
 
+  // ── 智能 thinking 参数兼容性检测 ──────────────────────────────────
+  // 只有同时满足以下条件才发送 thinking 参数：
+  //   1. 配置了 thinkingBudgetTokens 且 > 0
+  //   2. 模型名称明确支持 thinking
+  //
+  // 支持 thinking 的模型系列（大小写不敏感）：
+  //   - doubao-seed / doubao-pro-seed（字节豆包推理模型）
+  //   - deepseek-reasoner / deepseek-r1（DeepSeek R1 推理模型）
+  //   - qwen-plus-thinking / qwen-max-thinking（阿里云 Qwen 推理版）
+  //
+  // 不支持的常见模型（会触发 400 错误）：
+  //   - doubao-xxx（非 seed 后缀，如 doubao-pro-4k / doubao-lite-4k）
+  //   - deepseek-chat（DeepSeek 对话模型，非推理版）
+  //   - gpt-4o / gpt-4o-mini（OpenAI 标准模型）
+  //   - glm-4-xxx（智谱 GLM 系列）
+  //   - qwen-xxx（非 thinking 后缀）
+  const modelName = (provider.model ?? '').toLowerCase();
+  const supportsThinking = 
+    modelName.includes('seed') ||           // doubao-seed / doubao-pro-seed
+    modelName.includes('reasoner') ||       // deepseek-reasoner
+    modelName.includes('r1') ||             // deepseek-r1
+    modelName.includes('thinking');         // qwen-plus-thinking
+
   return {
-    ...(provider.thinkingBudgetTokens !== undefined
+    ...(provider.thinkingBudgetTokens &&
+        provider.thinkingBudgetTokens > 0 &&
+        supportsThinking  // ← 新增：模型名称检测
       ? {
           thinking: {
-            type: provider.thinkingBudgetTokens === 0 ? 'disabled' : 'auto',
+            type: 'auto',
             budget_tokens: provider.thinkingBudgetTokens,
           },
         }

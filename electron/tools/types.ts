@@ -144,26 +144,71 @@ export function isSkillPauseResult(r: ToolExecuteResult): r is SkillPauseResult 
   return typeof r === 'object' && '__pause' in r && (r as SkillPauseResult).__pause === true;
 }
 
+/**
+ * 工具执行上下文（可选）
+ * 
+ * 用于向工具传递会话级元信息（如 conversationId），
+ * 使工具能访问会话特定的状态（如 todo_tool 需要隔离不同会话的任务列表）。
+ */
+export interface ToolContext {
+  /** 当前会话 ID */
+  conversationId?: string;
+}
+
 export interface ToolDefinition<TParams = Record<string, unknown>> {
   /** OpenAI function calling 格式的工具描述，LLM 依据此决定是否调用 */
   schema: ToolSchema;
   /**
    * 工具执行函数
    * @param params - 已解析的参数对象（由 LLM 生成，registry 负责 JSON.parse）
+   * @param context - 可选的执行上下文（如 conversationId）
    * @returns 字符串结果或含图像的 ToolImageResult，aiService 会自动处理注入
    */
-  execute: (params: TParams) => Promise<ToolExecuteResult> | ToolExecuteResult;
+  execute: (params: TParams, context?: ToolContext) => Promise<ToolExecuteResult> | ToolExecuteResult;
+
   /**
+   * 运行时条件可用性检测（借鉴 hermes-agent）
+   *
+   * 当返回 false 时，工具不会暴露给 AI（即使在 toolset 中也会被过滤）。
+   * 适用场景：
+   *   - API key 不存在时隐藏依赖外部服务的工具（如 web_extract 需要 FIRECRAWL_API_KEY）
+   *   - 浏览器未启动时隐藏 browser 工具
+   *   - 某个依赖未安装时隐藏相关功能
+   *
+   * @returns true=可用（暴露给 AI），false=不可用（自动隐藏）
+   *
+   * @example
+   * ```ts
+   * export const webExtractTool: ToolDefinition<WebExtractParams> = {
+   *   checkAvailable: () => !!process.env.FIRECRAWL_API_KEY,
+   *   schema: { ... },
+   *   execute: async (args) => { ... }
+   * };
+   * ```
+   */
+  checkAvailable?: () => boolean;
+
+  /**
+   * @deprecated 使用 toolsets.ts 的 Toolset 系统替代
+   *
    * 标记此工具为高级 Skill（封装了多步原子操作的复合能力）。
    * ToolRegistry.getSchemasForMode() 时，若存在 Skill，
    * 会优先暴露 Skill 并收起部分冗余的底层原子工具，降低 AI 选择压力。
+   *
+   * 新架构：使用 toolsets.ts 定义工具分组，不再需要在各工具代码中标记。
    */
   isSkill?: boolean;
+
   /**
+   * @deprecated 使用 toolsets.ts 的 Toolset 系统替代
+   *
    * 当注册表中存在至少一个 Skill 时，自动隐藏此工具。
    * 适用于已被某个 Skill 内部封装、不应直接暴露给 AI 的底层原子工具。
    * 例如：browser_click_smart 注册后，browser_click / browser_js_click / browser_get_buttons
    * 应加此标记，避免 AI 在有 Skill 的情况下仍直接调用底层决策树工具。
+   *
+   * 新架构：在 toolsets.ts 中定义 browser-primitive 和 browser-smart 两个 toolset，
+   * 默认只启用 browser-smart（不包含 browser_click 等原子工具）。
    */
   hideWhenSkills?: boolean;
 }

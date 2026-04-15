@@ -16,7 +16,8 @@
     "copyright": "Copyright © 2026",
     "directories": {
       "output": "dist"
-    },    "extraResources": [
+    },
+    "extraResources": [
       {
         "from": ".env",
         "to": ".env.defaults"
@@ -25,7 +26,8 @@
         "from": "electron/manual",
         "to": "electron/manual"
       }
-    ],    "files": [
+    ],
+    "files": [
       "out/**/*",
       "public/**/*"
     ],
@@ -61,10 +63,12 @@
   },
   "dependencies": {
     "@nut-tree-fork/nut-js": "^4.2.6",
+    "@types/qrcode": "^1.5.6",
     "better-sqlite3": "^12.8.0",
     "discord.js": "^14.25.1",
     "dotenv": "^17.3.1",
     "global-agent": "^4.1.3",
-    "playwright": "^1.58.2"
+    "playwright": "^1.58.2",
+    "qrcode": "^1.5.4"
   }
 }
