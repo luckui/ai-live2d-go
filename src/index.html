@@ -153,7 +153,6 @@
               <div class="s-section-row">
                 <h3 class="s-title">服务商配置</h3>
                 <div class="s-btn-group">
-                  <button id="s-set-active-btn" class="s-small-btn">设为当前</button>
                   <button id="s-del-btn" class="s-small-btn s-del-btn">删除</button>
                 </div>
               </div>
@@ -195,8 +194,9 @@
           <!-- ════ Tab: 语音合成（TTS） ════ -->
           <div id="s-tab-tts" class="s-tab-pane s-tab-pane-hidden">
 
+            <!-- 全局开关 -->
             <section class="s-section">
-              <h3 class="s-title">TTS 服务</h3>
+              <h3 class="s-title">语音播报</h3>
               <label class="s-label s-label-row">
                 <span class="s-label-text">启用语音合成</span>
                 <label class="s-toggle">
@@ -204,9 +204,37 @@
                   <span class="s-toggle-slider"></span>
                 </label>
               </label>
+              <div class="s-status-row" style="margin-top:4px">
+                <span id="tts-runtime-dot" class="s-status-dot s-status-off"></span>
+                <span id="tts-runtime-text" class="s-status-label">加载中…</span>
+              </div>
+            </section>
+
+            <!-- TTS 服务商列表 -->
+            <section class="s-section">
+              <div class="s-section-row">
+                <h3 class="s-title">TTS 服务商</h3>
+                <button id="tts-add-btn" class="s-small-btn">+ 新增</button>
+              </div>
+              <label class="s-label">选择服务商
+                <select id="tts-provider-select" class="s-input"></select>
+              </label>
+            </section>
+
+            <!-- TTS 服务商表单 -->
+            <section class="s-section" id="tts-form-section">
+              <div class="s-section-row">
+                <h3 class="s-title">服务商配置</h3>
+                <div class="s-btn-group">
+                  <button id="tts-del-btn" class="s-small-btn s-del-btn">删除</button>
+                </div>
+              </div>
+              <label class="s-label">名称
+                <input id="tts-name" type="text" class="s-input" placeholder="我的 TTS 服务" />
+              </label>
               <label class="s-label">服务地址
                 <input id="tts-url" type="text" class="s-input" placeholder="http://127.0.0.1:9880" />
-                <span class="s-hint">任意兼容的 TTS 服务地址（本地或远程均可）</span>
+                <span class="s-hint">任意兼容 POST /tts/generate 规范的 RESTful 服务</span>
               </label>
               <label class="s-label">API Key
                 <div class="s-input-row">
@@ -217,6 +245,7 @@
               <div class="s-row-2">
                 <label class="s-label">音色
                   <input id="tts-speaker" type="text" class="s-input" placeholder="xiaoxiao" />
+                  <select id="tts-speaker-select" class="s-input" style="display:none"></select>
                 </label>
                 <label class="s-label">语言
                   <select id="tts-language" class="s-input">
@@ -229,23 +258,22 @@
                 </label>
               </div>
               <div class="s-status-row" style="margin-top:8px">
-                <span id="tts-runtime-dot" class="s-status-dot s-status-off"></span>
-                <span id="tts-runtime-text" class="s-status-label">加载中…</span>
-                <button id="tts-test-btn" class="s-small-btn" style="margin-left:auto">🔍 测试连接</button>
+                <button id="tts-test-btn" class="s-small-btn">🔍 测试连接</button>
                 <span id="tts-status-dot" class="s-status-dot s-status-off" style="margin-left:6px"></span>
                 <span id="tts-status-text" class="s-status-label">-</span>
               </div>
             </section>
 
-            <section class="s-section">
-              <h3 class="s-title">快捷安装本地服务</h3>
-              <span class="s-hint" style="margin-bottom:8px;display:block">没有 TTS 服务？一键部署免费的 edge-tts 本地服务（需 Python 3.10+）</span>
+            <!-- 本地服务管理（仅 isLocal 时显示） -->
+            <section class="s-section" id="tts-local-section" style="display:none">
+              <h3 class="s-title">本地服务管理</h3>
+              <span class="s-hint" id="tts-local-hint" style="margin-bottom:8px;display:block">一键部署免费的 edge-tts 本地服务（需 Python 3.10+）</span>
               <div style="display:flex;gap:8px;flex-wrap:wrap">
                 <button id="tts-local-install-btn" class="s-small-btn">🚀 一键安装并启动</button>
                 <button id="tts-local-start-btn" class="s-small-btn">▶ 启动</button>
                 <button id="tts-local-stop-btn" class="s-small-btn">⏹ 停止</button>
               </div>
-              <div id="tts-local-log" class="s-hint" style="margin-top:6px;white-space:pre-wrap;max-height:120px;overflow-y:auto;display:none"></div>
+              <pre id="tts-local-log" class="s-hint" style="margin-top:6px;white-space:pre-wrap;word-break:break-all;max-height:260px;overflow-y:auto;display:none;user-select:text;cursor:text;background:rgba(0,0,0,.03);padding:8px;border-radius:6px;font-size:12px;line-height:1.5"></pre>
             </section>
 
             <div class="s-save-row">

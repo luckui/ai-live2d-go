@@ -97,6 +97,8 @@ import { startBridges, stopBridges } from './bridges/index';
 import { DiscordAdapter } from './bridges/adapters/discord';
 import { WeChatAdapter, qrLogin } from './bridges/adapters/wechat';
 import { ttsService } from './ttsService';
+import defaultTTSConfig from './tts.config';
+import type { TTSConfig, TTSProviderConfig } from './tts.config';
 import { getAgentMode, setAgentMode } from './agentMode';
 import * as ttsServerManager from './ttsServerManager';
 
@@ -109,6 +111,53 @@ import * as ttsServerManager from './ttsServerManager';
  * 这样每次更新提示词后重启即可生效，不需要用户手动清空数据库。
  */
 const USER_EDITABLE_FIELDS = ['apiKey', 'baseUrl', 'model', 'temperature', 'maxTokens', 'name'] as const;
+
+// ── TTS 多 Provider 内存配置 ──────────────────────────────────────
+let ttsConfig: TTSConfig = JSON.parse(JSON.stringify(defaultTTSConfig));
+
+/**
+ * 根据 ttsConfig 当前状态激活/禁用 ttsService
+ */
+function activateTTSProvider(): void {
+  console.log(`[TTS] activateTTSProvider: enabled=${ttsConfig.enabled}, activeProvider=${ttsConfig.activeProvider}`);
+  if (!ttsConfig.enabled) {
+    console.log('[TTS] → 全局开关关闭，禁用 TTS');
+    ttsService.configure(null);
+    return;
+  }
+  const provider = ttsConfig.providers[ttsConfig.activeProvider];
+  if (!provider) {
+    console.log(`[TTS] → 找不到 provider "${ttsConfig.activeProvider}"，禁用 TTS`);
+    ttsService.configure(null);
+    return;
+  }
+  console.log(`[TTS] → 激活 provider "${ttsConfig.activeProvider}": url=${provider.baseUrl}, speaker=${provider.speaker}, engine=${provider.localEngine ?? 'none'}`);
+  ttsService.configure(provider);
+}
+
+/** 广播 TTS 配置变化给所有窗口 */
+function broadcastTTSChanged(): void {
+  const { BrowserWindow } = require('electron') as typeof import('electron');
+  for (const win of BrowserWindow.getAllWindows()) {
+    win.webContents.send('tts:config-changed');
+  }
+}
+
+/** 供 manageTTS 工具调用：获取当前 TTS 配置 */
+export function getTTSConfig(): TTSConfig {
+  return ttsConfig;
+}
+
+/** 供 manageTTS 工具调用：更新 TTS 配置并激活 */
+export function updateTTSConfig(newCfg: Partial<TTSConfig>): void {
+  if (newCfg.enabled !== undefined) ttsConfig.enabled = newCfg.enabled;
+  if (newCfg.activeProvider !== undefined) ttsConfig.activeProvider = newCfg.activeProvider;
+  if (newCfg.providers !== undefined) ttsConfig.providers = newCfg.providers;
+  if (newCfg.deletedProviders !== undefined) ttsConfig.deletedProviders = newCfg.deletedProviders;
+  activateTTSProvider();
+  setSetting('tts_config', JSON.stringify(ttsConfig));
+  broadcastTTSChanged();
+}
 
 function loadPersistedConfig(): void {
   const stored = getSetting('llm_config');
@@ -145,19 +194,49 @@ function loadPersistedConfig(): void {
     // 解析失败时保持默认配置
   }
 
-  // ── 从 SQLite 恢复 TTS 配置（优先级高于 .env） ──
+  // ── 从 SQLite 恢复 TTS 配置（多 Provider 格式 + 合并新增默认） ──
   const storedTTS = getSetting('tts_config');
   if (storedTTS) {
     try {
-      const tts = JSON.parse(storedTTS) as {
-        enabled: boolean; url: string; apiKey: string; speaker: string; language: string;
-      };
-      process.env['TTS_ENABLED']  = String(tts.enabled);
-      process.env['TTS_URL']      = tts.url;
-      process.env['TTS_API_KEY']  = tts.apiKey;
-      process.env['TTS_SPEAKER']  = tts.speaker;
-      process.env['TTS_LANGUAGE'] = tts.language;
-    } catch { /* 解析失败保持 .env 默认值 */ }
+      const saved = JSON.parse(storedTTS);
+      if (saved.providers && saved.activeProvider) {
+        // 新格式：多 Provider
+        ttsConfig.enabled = saved.enabled ?? false;
+        ttsConfig.activeProvider = saved.activeProvider;
+        ttsConfig.providers = saved.providers;
+        ttsConfig.deletedProviders = saved.deletedProviders ?? [];
+
+        // 将代码中新增的默认 provider 合并进来（用户删除过的除外）
+        const deleted = new Set(ttsConfig.deletedProviders);
+        for (const [key, codeProv] of Object.entries(defaultTTSConfig.providers)) {
+          if (!(key in ttsConfig.providers) && !deleted.has(key)) {
+            ttsConfig.providers[key] = codeProv;
+          }
+        }
+      } else if (saved.url !== undefined) {
+        // 旧格式迁移：{ enabled, url, apiKey, speaker, language }
+        const migrated: TTSConfig = {
+          enabled: saved.enabled ?? false,
+          activeProvider: 'migrated',
+          providers: {
+            migrated: {
+              type: 'http-tts',
+              name: '迁移的 TTS 服务',
+              baseUrl: saved.url || 'http://127.0.0.1:9880',
+              apiKey: saved.apiKey || '',
+              speaker: saved.speaker || 'xiaoxiao',
+              language: saved.language || 'Auto',
+            },
+            ...defaultTTSConfig.providers,
+          },
+          deletedProviders: [],
+        };
+        ttsConfig = migrated;
+        // 回写新格式
+        setSetting('tts_config', JSON.stringify(ttsConfig));
+        console.info('[TTS] 已从旧格式迁移到多 Provider 格式');
+      }
+    } catch { /* 解析失败保持默认 */ }
   }
 }
 
@@ -336,17 +415,18 @@ function createWindow(): void {
 
   // ── TTS ──────────────────────────────────────────────────────
   ipcMain.handle('tts:speak', async (_e, text: string) => {
-    const enabled = ttsService.isEnabled;
-    if (!enabled) {
-      console.info('[TTS] speak 跳过: isEnabled=false, TTS_ENABLED=' + process.env['TTS_ENABLED'] + ', TTS_URL=' + (process.env['TTS_URL'] || '(empty)'));
+    console.log(`[TTS] tts:speak 收到请求: enabled=${ttsService.isEnabled}, text="${text.slice(0, 60)}…"`);
+    if (!ttsService.isEnabled) {
+      console.warn('[TTS] tts:speak → 跳过: TTS 未启用');
       return null;
     }
     try {
       const wav = await ttsService.speak(text);
       const data = Buffer.from(wav).toString('base64');
+      console.log(`[TTS] tts:speak → 成功, ${wav.byteLength} bytes`);
       return { data };
     } catch (e) {
-      console.warn('[TTS] speak 失败:', (e as Error).message);
+      console.error('[TTS] tts:speak → 失败:', (e as Error).message);
       return null;
     }
   });
@@ -478,47 +558,37 @@ function createWindow(): void {
     console.log(`[IPC] Agent 模式切换为: ${mode}`);
   });
 
-  ipcMain.handle('tts:isEnabled', () => ttsService.isEnabled);
+  ipcMain.handle('tts:isEnabled', () => {
+    console.log(`[TTS] tts:isEnabled → ${ttsService.isEnabled} (url=${ttsService.currentUrl})`);
+    return ttsService.isEnabled;
+  });
 
-  ipcMain.handle('tts:debug', () => ttsService.debugInfo());
+  ipcMain.handle('tts:health', async () => {
+    const result = await ttsService.health();
+    console.log(`[TTS] tts:health → ok=${result.ok}, url=${ttsService.currentUrl}`, result.error ?? '');
+    return result;
+  });
 
-  ipcMain.handle('tts:health', () => ttsService.health());
-
-  // ── TTS 配置读写（设置 UI 用）──────────────────────────────────
+  // ── TTS 多 Provider 配置读写 ───────────────────────────────────
   ipcMain.handle('tts:config:get', () => ({
-    enabled:  process.env['TTS_ENABLED']  === 'true',
-    url:      process.env['TTS_URL']      ?? '',
-    apiKey:   process.env['TTS_API_KEY']  ?? '',
-    speaker:  process.env['TTS_SPEAKER']  ?? '',
-    language: process.env['TTS_LANGUAGE'] ?? 'Auto',
+    enabled: ttsConfig.enabled,
+    activeProvider: ttsConfig.activeProvider,
+    providers: ttsConfig.providers,
+    deletedProviders: ttsConfig.deletedProviders ?? [],
   }));
 
-  ipcMain.handle('tts:config:save', async (_e, newCfg: {
-    enabled: boolean; url: string; apiKey: string; speaker: string; language: string;
-  }) => {
-    // ① 更新内存 env + 重置服务（当前会话立即生效）
-    process.env['TTS_ENABLED']  = String(newCfg.enabled);
-    process.env['TTS_URL']      = newCfg.url;
-    process.env['TTS_API_KEY']  = newCfg.apiKey;
-    process.env['TTS_SPEAKER']  = newCfg.speaker;
-    process.env['TTS_LANGUAGE'] = newCfg.language;
-    ttsService.reset();
+  ipcMain.handle('tts:config:save', (_e, newCfg: TTSConfig) => {
+    console.log(`[TTS] tts:config:save: enabled=${newCfg.enabled}, activeProvider=${newCfg.activeProvider}, providerKeys=[${Object.keys(newCfg.providers).join(',')}]`);
+    ttsConfig.enabled = newCfg.enabled;
+    ttsConfig.activeProvider = newCfg.activeProvider;
+    ttsConfig.providers = newCfg.providers;
+    ttsConfig.deletedProviders = newCfg.deletedProviders ?? [];
 
-    // ② 评断当前是否已有效
-    const nowEnabled = ttsService.isEnabled;
-    const debug = {
-      TTS_ENABLED:  process.env['TTS_ENABLED'],
-      TTS_URL:      process.env['TTS_URL'] ? '(set)' : '(empty)',
-      TTS_SPEAKER:  process.env['TTS_SPEAKER'] ? '(set)' : '(empty)',
-      TTS_API_KEY:  process.env['TTS_API_KEY'] ? '(set)' : '(empty)',
-      isEnabled:    nowEnabled,
-    };
-    console.info('[TTS config:save] 保存后状态:', debug);
-
-    // ③ 持久化到 SQLite（和 LLM 设置统一方式，不触发 HMR）
-    setSetting('tts_config', JSON.stringify(newCfg));
-
-    return { isEnabled: nowEnabled, fileSaved: true, debug };
+    activateTTSProvider();
+    setSetting('tts_config', JSON.stringify(ttsConfig));
+    broadcastTTSChanged();
+    console.log(`[TTS] tts:config:save 完成: isEnabled=${ttsService.isEnabled}`);
+    return { isEnabled: ttsService.isEnabled };
   });
 
   ipcMain.handle('tts:config:test', async (_e, url: string) => {
@@ -533,28 +603,37 @@ function createWindow(): void {
     }
   });
 
-  // ── TTS 本地服务管理（设置 UI 用）──────────────────────────────
-  ipcMain.handle('tts:local:status', () => ttsServerManager.getStatus());
+  // ── TTS 本地服务管理 ──────────────────────────────────────────
+  ipcMain.handle('tts:local:status', (_e, engine?: string) => ttsServerManager.getStatus(engine));
 
-  ipcMain.handle('tts:local:install-and-start', async () => {
+  ipcMain.handle('tts:local:install-and-start', async (e, engine?: string) => {
+    const sender = e.sender;
     const logs: string[] = [];
-    const result = await ttsServerManager.installAndStart((msg) => logs.push(msg));
+    const result = await ttsServerManager.installAndStart((msg) => {
+      logs.push(msg);
+      try { sender.send('tts:local:log', msg); } catch { /* window closed */ }
+    }, engine);
     return { ...result, logs };
   });
 
-  ipcMain.handle('tts:local:start', () => ttsServerManager.startServer());
-  ipcMain.handle('tts:local:stop', () => ttsServerManager.stopServer());
+  ipcMain.handle('tts:local:start', async (e, engine?: string) => {
+    const sender = e.sender;
+    const result = await ttsServerManager.startServer(engine);
+    if (!result.ok) {
+      try { sender.send('tts:local:log', result.detail); } catch { /* ignore */ }
+    }
+    return result;
+  });
+
+  ipcMain.handle('tts:local:stop', (_e, engine?: string) => ttsServerManager.stopServer(engine));
 }
 
 app.whenReady().then(() => {
   initDatabase();
   loadPersistedConfig();
 
-  // 注入依赖给 ttsServerManager（bundled 环境下 require 无法获取同一单例）
-  ttsServerManager.initDeps({
-    resetTTS: () => ttsService.reset(),
-    setSetting,
-  });
+  // 启动时激活 TTS provider（默认 enabled=false，不会连接）
+  activateTTSProvider();
 
   createWindow();
 

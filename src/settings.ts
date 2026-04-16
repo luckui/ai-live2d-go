@@ -36,12 +36,31 @@ interface WeChatConfig {
   sendChunkDelay?: number;
 }
 
-interface TTSConfig {
-  enabled: boolean;
-  url: string;
+interface VoicePresetItem {
+  id: string;
+  name: string;
+  description: string;
+  refAudioFile?: string;
+}
+
+interface TTSProviderConfig {
+  type: 'http-tts';
+  name: string;
+  baseUrl: string;
   apiKey: string;
   speaker: string;
   language: string;
+  isLocal?: boolean;
+  localEngine?: string;
+  speakerMode?: 'text' | 'preset';
+  voicePresets?: VoicePresetItem[];
+}
+
+interface TTSConfig {
+  enabled: boolean;
+  activeProvider: string;
+  providers: Record<string, TTSProviderConfig>;
+  deletedProviders?: string[];
 }
 
 interface MemoryExportResult {
@@ -81,10 +100,11 @@ declare global {
       onConfigChanged?(cb: () => void): void;
     };
     ttsLocalAPI?: {
-      status(): Promise<{ installed: boolean; running: boolean; healthy: boolean; pid: number | null; port: number; serverDir: string }>;
-      installAndStart(): Promise<{ ok: boolean; detail: string; logs?: string[] }>;
-      start(): Promise<{ ok: boolean; detail: string }>;
-      stop(): Promise<{ ok: boolean; detail: string }>;
+      status(engine?: string): Promise<{ installed: boolean; running: boolean; healthy: boolean; pid: number | null; port: number; serverDir: string; engine: string }>;
+      installAndStart(engine?: string): Promise<{ ok: boolean; detail: string; logs?: string[] }>;
+      start(engine?: string): Promise<{ ok: boolean; detail: string }>;
+      stop(engine?: string): Promise<{ ok: boolean; detail: string }>;
+      onLog(cb: (msg: string) => void): () => void;
     };
     memoryAPI?: {
       export(): Promise<MemoryExportResult>;
@@ -132,18 +152,6 @@ function renderForm(): void {
   (document.getElementById('s-temp')      as HTMLInputElement).value  = String(p.temperature ?? 0.85);
   (document.getElementById('s-tokens')    as HTMLInputElement).value  = String(p.maxTokens  ?? 1024);
   (document.getElementById('s-sysprompt') as HTMLTextAreaElement).value = p.systemPrompt ?? '';
-
-  // "设为当前" 按钮状态
-  const activeBtn = document.getElementById('s-set-active-btn') as HTMLButtonElement;
-  if (editKey === cfg.activeProvider) {
-    activeBtn.textContent = '✓ 当前使用中';
-    activeBtn.classList.add('active');
-    activeBtn.disabled = true;
-  } else {
-    activeBtn.textContent = '设为当前';
-    activeBtn.classList.remove('active');
-    activeBtn.disabled = false;
-  }
 
   // 只有一个 provider 时隐藏删除按钮
   const delBtn = document.getElementById('s-del-btn') as HTMLButtonElement;
@@ -356,7 +364,10 @@ async function startWeChatQRLogin(): Promise<void> {
   }
 }
 
-// ── TTS UI ────────────────────────────────────────────
+// ── TTS UI（多 Provider）────────────────────────────────
+
+let ttsCfg: TTSConfig | null = null;
+let ttsEditKey: string | null = null;
 
 async function refreshTTSRuntimeStatus(): Promise<boolean> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -371,7 +382,6 @@ async function refreshTTSRuntimeStatus(): Promise<boolean> {
       text.textContent = '⚠️ 未启用';
       return false;
     }
-    // 配置已启用，再检查服务是否真的可达
     const health = ttsAPI ? await ttsAPI.health() : { ok: false };
     if (health.ok) {
       dot.className = 's-status-dot s-status-on';
@@ -383,7 +393,7 @@ async function refreshTTSRuntimeStatus(): Promise<boolean> {
       return false;
     }
   } catch {
-    dot.className   = 's-status-dot s-status-off';
+    dot.className = 's-status-dot s-status-off';
     text.textContent = '无法获取状态';
     return false;
   }
@@ -457,42 +467,185 @@ async function importMemory(): Promise<void> {
   }
 }
 
+/** 自发保存时跳过 onConfigChanged 触发的重载 */
+let _ttsSavingFromUI = false;
+
 async function loadTTSUI(): Promise<void> {
   if (!window.ttsSettingsAPI) return;
-  const tts = await window.ttsSettingsAPI.get();
-  // 先填入配置值（URL、音色等）
-  (document.getElementById('tts-url')      as HTMLInputElement).value    = tts.url;
-  (document.getElementById('tts-apikey')   as HTMLInputElement).value    = tts.apiKey;
-  (document.getElementById('tts-speaker')  as HTMLInputElement).value    = tts.speaker;
-  (document.getElementById('tts-language') as HTMLSelectElement).value   = tts.language;
-  // toggle 反映实际运行状态，而不是数据库旧值
-  const actuallyRunning = await refreshTTSRuntimeStatus();
-  (document.getElementById('tts-enabled')  as HTMLInputElement).checked = actuallyRunning;
-  void refreshLocalTTSStatus();
+  // 自发保存后的广播回调 → 跳过重载，避免编辑位置跳回
+  if (_ttsSavingFromUI) return;
+
+  ttsCfg = await window.ttsSettingsAPI.get() as TTSConfig;
+  // 如果当前正在编辑的 provider 仍存在，保留编辑位置
+  if (!ttsEditKey || !ttsCfg.providers[ttsEditKey]) {
+    ttsEditKey = ttsCfg.activeProvider;
+  }
+
+  // 全局开关 — 反映配置中保存的 enabled 状态（而非运行时健康状态）
+  (document.getElementById('tts-enabled') as HTMLInputElement).checked = ttsCfg.enabled;
+  // 状态指示器 — 单独显示实际运行状态
+  await refreshTTSRuntimeStatus();
+
+  renderTTSProviderSelect();
+  renderTTSForm();
+}
+
+function syncTTSFormToCfg(): void {
+  if (!ttsCfg || !ttsEditKey || !ttsCfg.providers[ttsEditKey]) return;
+  const p = ttsCfg.providers[ttsEditKey];
+  p.name     = (document.getElementById('tts-name')     as HTMLInputElement).value.trim() || p.name;
+  p.baseUrl  = (document.getElementById('tts-url')      as HTMLInputElement).value.trim();
+  p.apiKey   = (document.getElementById('tts-apikey')   as HTMLInputElement).value.trim();
+  p.language = (document.getElementById('tts-language')  as HTMLSelectElement).value;
+
+  // 根据 speakerMode 从不同控件读取 speaker
+  if (p.speakerMode === 'preset') {
+    const sel = document.getElementById('tts-speaker-select') as HTMLSelectElement;
+    p.speaker = sel.value;
+  } else {
+    p.speaker = (document.getElementById('tts-speaker') as HTMLInputElement).value.trim();
+  }
+}
+
+function renderTTSProviderSelect(): void {
+  if (!ttsCfg) return;
+  const select = document.getElementById('tts-provider-select') as HTMLSelectElement;
+  if (!select) return;
+  select.innerHTML = '';
+
+  for (const [key, prov] of Object.entries(ttsCfg.providers)) {
+    const option = document.createElement('option');
+    option.value = key;
+    option.textContent = prov.name || key;
+    if (key === ttsCfg.activeProvider) option.textContent += ' (当前使用)';
+    if (key === ttsEditKey) option.selected = true;
+    select.appendChild(option);
+  }
+
+  select.onchange = () => {
+    syncTTSFormToCfg();
+    ttsEditKey = select.value;
+    renderTTSProviderSelect();
+    renderTTSForm();
+  };
+}
+
+function renderTTSForm(): void {
+  if (!ttsCfg || !ttsEditKey) return;
+  const p = ttsCfg.providers[ttsEditKey];
+  if (!p) return;
+
+  (document.getElementById('tts-name')     as HTMLInputElement).value  = p.name     ?? '';
+  (document.getElementById('tts-url')      as HTMLInputElement).value  = p.baseUrl  ?? '';
+  (document.getElementById('tts-apikey')   as HTMLInputElement).value  = p.apiKey   ?? '';
+  (document.getElementById('tts-language') as HTMLSelectElement).value = p.language  ?? 'Auto';
+
+  // ── 音色区域：preset 模式显示下拉，text 模式显示文本框 ──
+  const speakerInput  = document.getElementById('tts-speaker')        as HTMLInputElement;
+  const speakerSelect = document.getElementById('tts-speaker-select') as HTMLSelectElement;
+
+  if (p.speakerMode === 'preset' && p.voicePresets && p.voicePresets.length > 0) {
+    speakerInput.style.display  = 'none';
+    speakerSelect.style.display = '';
+    speakerSelect.innerHTML = '';
+    for (const preset of p.voicePresets) {
+      const opt = document.createElement('option');
+      opt.value = preset.id;
+      opt.textContent = `${preset.name}（${preset.description}）`;
+      if (preset.id === p.speaker) opt.selected = true;
+      speakerSelect.appendChild(opt);
+    }
+  } else {
+    speakerInput.style.display  = '';
+    speakerSelect.style.display = 'none';
+    speakerInput.value = p.speaker ?? '';
+  }
+
+
+
+  // 只有一个 provider 时隐藏删除
+  const delBtn = document.getElementById('tts-del-btn') as HTMLButtonElement;
+  delBtn.style.visibility = Object.keys(ttsCfg.providers).length <= 1 ? 'hidden' : 'visible';
+
+  // 本地服务管理区域：仅 isLocal 时显示，且更新提示文本
+  const localSection = document.getElementById('tts-local-section') as HTMLElement;
+  if (localSection) {
+    localSection.style.display = p.isLocal ? '' : 'none';
+    const hint = document.getElementById('tts-local-hint') as HTMLElement | null;
+    if (hint) {
+      const hintMap: Record<string, string> = {
+        'edge-tts': '一键部署免费的 edge-tts 本地服务（需 Python 3.10+）',
+        'moss-tts-nano': '部署 MOSS-TTS-Nano 本地离线语音合成（需 Python 3.10+，约 2GB 磁盘）',
+      };
+      hint.textContent = hintMap[p.localEngine || 'edge-tts'] ?? hintMap['edge-tts'];
+    }
+  }
 }
 
 async function saveTTSSettings(): Promise<void> {
-  if (!window.ttsSettingsAPI) return;
-  const ttsCfg: TTSConfig = {
-    enabled:  (document.getElementById('tts-enabled')  as HTMLInputElement).checked,
-    url:      (document.getElementById('tts-url')      as HTMLInputElement).value.trim(),
-    apiKey:   (document.getElementById('tts-apikey')   as HTMLInputElement).value.trim(),
-    speaker:  (document.getElementById('tts-speaker')  as HTMLInputElement).value.trim(),
-    language: (document.getElementById('tts-language') as HTMLSelectElement).value,
-  };
+  if (!window.ttsSettingsAPI || !ttsCfg) return;
+  syncTTSFormToCfg();
+  // 下拉框当前选中的即为活跃 provider
+  if (ttsEditKey) ttsCfg.activeProvider = ttsEditKey;
+  ttsCfg.enabled = (document.getElementById('tts-enabled') as HTMLInputElement).checked;
+
   const btn = document.getElementById('tts-save-btn') as HTMLButtonElement;
   btn.textContent = '保存中…';
   btn.disabled = true;
+  // 抑制自发保存触发的 onConfigChanged 回调（避免重载导致编辑位置跳回）
+  _ttsSavingFromUI = true;
   try {
     await window.ttsSettingsAPI.save(ttsCfg);
     btn.textContent = '✓ 已保存';
-    void refreshTTSRuntimeStatus(); // 刷新运行时状态确认生效
+    void refreshTTSRuntimeStatus();
+    renderTTSProviderSelect();
     setTimeout(() => { btn.textContent = '保存设置'; btn.disabled = false; }, 1800);
   } catch (e) {
     btn.textContent = '保存失败';
     setTimeout(() => { btn.textContent = '保存设置'; btn.disabled = false; }, 2000);
     console.error('[TTS save]', e);
+  } finally {
+    // 延迟重置，确保广播回调已被跳过
+    setTimeout(() => { _ttsSavingFromUI = false; }, 500);
   }
+}
+
+function addTTSProvider(): void {
+  if (!ttsCfg) return;
+  syncTTSFormToCfg();
+  const key = `tts_${Date.now()}`;
+  ttsCfg.providers[key] = {
+    type: 'http-tts',
+    name: '新 TTS 服务',
+    baseUrl: '',
+    apiKey: '',
+    speaker: '',
+    language: 'Auto',
+  };
+  ttsEditKey = key;
+  renderTTSProviderSelect();
+  renderTTSForm();
+}
+
+function deleteTTSProvider(): void {
+  if (!ttsCfg || !ttsEditKey) return;
+  if (Object.keys(ttsCfg.providers).length <= 1) return;
+  if (ttsEditKey === ttsCfg.activeProvider) {
+    ttsCfg.activeProvider = Object.keys(ttsCfg.providers).filter(k => k !== ttsEditKey)[0];
+  }
+  ttsCfg.deletedProviders = [...(ttsCfg.deletedProviders ?? []), ttsEditKey];
+  delete ttsCfg.providers[ttsEditKey];
+  ttsEditKey = ttsCfg.activeProvider;
+  void saveTTSSettings();
+}
+
+function setActiveTTSProvider(): void {
+  if (!ttsCfg || !ttsEditKey) return;
+  syncTTSFormToCfg();
+  ttsCfg.activeProvider = ttsEditKey;
+  renderTTSProviderSelect();
+  renderTTSForm();
+  void saveTTSSettings();
 }
 
 async function runTTSHealthCheck(): Promise<void> {
@@ -529,50 +682,46 @@ async function runTTSHealthCheck(): Promise<void> {
 
 // ── Local TTS UI ──────────────────────────────────────
 
-async function refreshLocalTTSStatus(): Promise<void> {
-  // 本地服务状态已由上方运行时状态反映，此处仅用于内部调用保持接口一致
-}
-
-/** 将本地服务地址填入表单并保存，使 TTS 立即启用 */
-async function applyLocalTTSToForm(): Promise<void> {
-  (document.getElementById('tts-enabled') as HTMLInputElement).checked = true;
-  (document.getElementById('tts-url')     as HTMLInputElement).value   = 'http://127.0.0.1:9880';
-  (document.getElementById('tts-apikey')  as HTMLInputElement).value   = '';
-  (document.getElementById('tts-speaker') as HTMLInputElement).value   = 'xiaoxiao';
-  await saveTTSSettings();
-}
-
 async function localTTSInstallAndStart(): Promise<void> {
   const api = (window as any).ttsLocalAPI as Window['ttsLocalAPI'];
   if (!api) return;
 
+  const engine = ttsCfg?.providers[ttsEditKey!]?.localEngine;
   const btn = document.getElementById('tts-local-install-btn') as HTMLButtonElement;
   const log = document.getElementById('tts-local-log')         as HTMLElement;
   btn.disabled = true;
   btn.textContent = '安装中…';
   log.style.display = 'block';
-  log.textContent = '正在安装，请稍候…\n';
+  log.textContent = '';
+
+  // 订阅实时日志
+  const unsubscribe = api.onLog?.((msg: string) => {
+    log.textContent += msg + '\n';
+    log.scrollTop = log.scrollHeight;
+  });
 
   try {
-    const result = await api.installAndStart();
-    if (result.logs) {
-      log.textContent = result.logs.join('\n') + '\n' + result.detail;
-    } else {
-      log.textContent = result.detail;
-    }
+    const result = await api.installAndStart(engine);
 
+    // 追加最终结果
     if (result.ok) {
+      log.textContent += '\n✅ ' + result.detail;
       btn.textContent = '✅ 完成';
-      await applyLocalTTSToForm();
+      // 安装启动成功 → 自动勾选启用 + 保存
+      const toggle = document.getElementById('tts-enabled') as HTMLInputElement;
+      toggle.checked = true;
+      await saveTTSSettings();
     } else {
+      log.textContent += '\n❌ ' + result.detail;
       btn.textContent = '❌ 失败，点击重试';
     }
+    log.scrollTop = log.scrollHeight;
   } catch (e) {
-    log.textContent = `错误: ${String(e)}`;
+    log.textContent += `\n错误: ${String(e)}`;
     btn.textContent = '❌ 失败，点击重试';
   } finally {
+    unsubscribe?.();
     btn.disabled = false;
-    void refreshLocalTTSStatus();
     void refreshTTSRuntimeStatus();
   }
 }
@@ -581,26 +730,38 @@ async function localTTSStart(): Promise<void> {
   const api = (window as any).ttsLocalAPI as Window['ttsLocalAPI'];
   if (!api) return;
 
+  const engine = ttsCfg?.providers[ttsEditKey!]?.localEngine;
   const btn = document.getElementById('tts-local-start-btn') as HTMLButtonElement;
+  const log = document.getElementById('tts-local-log') as HTMLElement;
   btn.disabled = true;
   btn.textContent = '启动中…';
+  log.style.display = 'block';
+  log.textContent = '启动 TTS Server…\n';
+
+  const unsubscribe = api.onLog?.((msg: string) => {
+    log.textContent += msg + '\n';
+    log.scrollTop = log.scrollHeight;
+  });
 
   try {
-    const result = await api.start();
+    const result = await api.start(engine);
     if (result.ok) {
-      // 启动成功后自动填入本地地址并保存
-      await applyLocalTTSToForm();
+      log.textContent += '✅ ' + result.detail;
+      // 启动成功 → 自动勾选启用 + 保存
+      const toggle = document.getElementById('tts-enabled') as HTMLInputElement;
+      toggle.checked = true;
+      await saveTTSSettings();
     } else {
-      const log = document.getElementById('tts-local-log') as HTMLElement;
-      log.style.display = 'block';
-      log.textContent = result.detail;
+      log.textContent += '❌ ' + result.detail;
     }
+    log.scrollTop = log.scrollHeight;
   } catch (e) {
+    log.textContent += `错误: ${String(e)}`;
     console.error('[TTS local start]', e);
   } finally {
+    unsubscribe?.();
     btn.textContent = '▶ 启动';
     btn.disabled = false;
-    void refreshLocalTTSStatus();
     void refreshTTSRuntimeStatus();
   }
 }
@@ -609,18 +770,18 @@ async function localTTSStop(): Promise<void> {
   const api = (window as any).ttsLocalAPI as Window['ttsLocalAPI'];
   if (!api) return;
 
+  const engine = ttsCfg?.providers[ttsEditKey!]?.localEngine;
   const btn = document.getElementById('tts-local-stop-btn') as HTMLButtonElement;
   btn.disabled = true;
   btn.textContent = '停止中…';
 
   try {
-    await api.stop();
+    await api.stop(engine);
   } catch (e) {
     console.error('[TTS local stop]', e);
   } finally {
     btn.textContent = '⏹ 停止';
     btn.disabled = false;
-    void refreshLocalTTSStatus();
     void refreshTTSRuntimeStatus();
   }
 }
@@ -630,6 +791,8 @@ async function localTTSStop(): Promise<void> {
 async function saveSettings(): Promise<void> {
   if (!cfg) return;
   syncFormToCfg();
+  // 下拉框当前选中的即为活跃 provider
+  if (editKey) cfg.activeProvider = editKey;
   await window.settingsAPI!.save(cfg);
 
   const btn = document.getElementById('settings-save-btn') as HTMLButtonElement;
@@ -748,9 +911,6 @@ export function initSettings(): void {
   // 删除 provider
   document.getElementById('s-del-btn')?.addEventListener('click', deleteProvider);
 
-  // 设为当前
-  document.getElementById('s-set-active-btn')?.addEventListener('click', setActiveProvider);
-
   // 保存
   document.getElementById('settings-save-btn')?.addEventListener('click', saveSettings);
 
@@ -816,6 +976,8 @@ export function initSettings(): void {
   // ── TTS 表单事件 ─────────────────────────────────────
   document.getElementById('tts-save-btn')?.addEventListener('click', () => void saveTTSSettings());
   document.getElementById('tts-test-btn')?.addEventListener('click', () => void runTTSHealthCheck());
+  document.getElementById('tts-add-btn')?.addEventListener('click', addTTSProvider);
+  document.getElementById('tts-del-btn')?.addEventListener('click', deleteTTSProvider);
   document.getElementById('tts-local-install-btn')?.addEventListener('click', () => void localTTSInstallAndStart());
   document.getElementById('tts-local-start-btn')?.addEventListener('click', () => void localTTSStart());
   document.getElementById('tts-local-stop-btn')?.addEventListener('click', () => void localTTSStop());

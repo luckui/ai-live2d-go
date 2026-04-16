@@ -1,0 +1,4 @@
+# MOSS-TTS-Nano Adapter Server 依赖
+# 核心依赖由 pip install <MOSS-TTS-Nano 源码目录> 安装
+# 此文件补充 pyproject.toml 中未声明的额外依赖
+soundfile

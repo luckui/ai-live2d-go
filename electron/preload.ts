@@ -44,23 +44,27 @@ contextBridge.exposeInMainWorld('discordAPI', {
 contextBridge.exposeInMainWorld('ttsAPI', {
   isEnabled: () => ipcRenderer.invoke('tts:isEnabled'),
   speak: (text: string) => ipcRenderer.invoke('tts:speak', text),
-  debug: () => ipcRenderer.invoke('tts:debug'),
   health: () => ipcRenderer.invoke('tts:health'),
 });
 
 contextBridge.exposeInMainWorld('ttsSettingsAPI', {
   get:  ()             => ipcRenderer.invoke('tts:config:get'),
-  save: (cfg: unknown) => ipcRenderer.invoke('tts:config:save', cfg) as Promise<{ isEnabled: boolean; fileSaved: boolean; debug: Record<string, unknown> }>,
+  save: (cfg: unknown) => ipcRenderer.invoke('tts:config:save', cfg),
   test: (url: string)  => ipcRenderer.invoke('tts:config:test', url),
   onConfigChanged: (cb: () => void) =>
     ipcRenderer.on('tts:config-changed', () => cb()),
 });
 
 contextBridge.exposeInMainWorld('ttsLocalAPI', {
-  status:          () => ipcRenderer.invoke('tts:local:status'),
-  installAndStart: () => ipcRenderer.invoke('tts:local:install-and-start'),
-  start:           () => ipcRenderer.invoke('tts:local:start'),
-  stop:            () => ipcRenderer.invoke('tts:local:stop'),
+  status:          (engine?: string) => ipcRenderer.invoke('tts:local:status', engine),
+  installAndStart: (engine?: string) => ipcRenderer.invoke('tts:local:install-and-start', engine),
+  start:           (engine?: string) => ipcRenderer.invoke('tts:local:start', engine),
+  stop:            (engine?: string) => ipcRenderer.invoke('tts:local:stop', engine),
+  onLog:           (cb: (msg: string) => void) => {
+    const handler = (_e: unknown, msg: string) => cb(msg);
+    ipcRenderer.on('tts:local:log', handler);
+    return () => { ipcRenderer.removeListener('tts:local:log', handler); };
+  },
 });
 
 contextBridge.exposeInMainWorld('memoryAPI', {

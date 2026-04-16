@@ -27,9 +27,18 @@
         "to": "electron/manual"
       },
       {
+        "from": "tools/uv.exe",
+        "to": "tools/uv.exe"
+      },
+      {
         "from": "tts-server",
         "to": "tts-server",
         "filter": ["**/*", "!.venv/**", "!__pycache__/**", "!.server.pid"]
+      },
+      {
+        "from": "tts-server-nano",
+        "to": "tts-server-nano",
+        "filter": ["**/*", "!.venv/**", "!__pycache__/**", "!.server.pid", "!models/**", "!generated_audio/**"]
       }
     ],
     "files": [

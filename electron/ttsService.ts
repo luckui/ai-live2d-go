@@ -2,16 +2,11 @@
 /**
  * TTS 服务模块（主进程）
  *
- * 统一适配器：任何符合 POST /tts/generate 规范的 HTTP TTS 服务均可接入，
- * 无论是远程服务器、本地 tts-server、还是第三方 API，只要 URL 对就行。
- *
- * 环境变量（.env）：
- *   TTS_ENABLED=true
- *   TTS_URL=http://127.0.0.1:9880    ← 任意 TTS 服务地址（本地或远程皆可）
- *   TTS_SPEAKER=xiaoxiao              ← 音色名称
- *   TTS_LANGUAGE=Auto                 ← 可选，默认 Auto
- *   TTS_API_KEY=<key>                 ← 可选，Bearer Token 认证
+ * 统一适配器：任何符合 POST /tts/generate 规范的 HTTP TTS 服务均可接入。
+ * 不再读取 process.env，改为由 main.ts 调用 configure(provider) 注入配置。
  */
+
+import type { TTSProviderConfig } from './tts.config';
 
 // ── 接口定义 ────────────────────────────────────────────────────────
 
@@ -26,8 +21,6 @@ export interface TTSAdapterConfig {
 }
 
 // ── 统一 HTTP TTS 适配器 ────────────────────────────────────────────
-// 规范：POST /tts/generate  body: { text, speaker, language }  → 音频流
-//       GET  /health                                            → 健康检查
 
 class HttpTTSAdapter implements TTSAdapter {
   readonly name: string;
@@ -36,7 +29,6 @@ class HttpTTSAdapter implements TTSAdapter {
     private readonly baseUrl: string,
     private readonly apiKey: string = '',
   ) {
-    // 用 URL 来标识，方便调试
     this.name = `http-tts(${baseUrl})`;
   }
 
@@ -67,71 +59,57 @@ class HttpTTSAdapter implements TTSAdapter {
 // ── TTS 服务单例 ────────────────────────────────────────────────────
 
 class TTSService {
-  private _ready = false;
   private _adapter: TTSAdapter | null = null;
   private _config: TTSAdapterConfig = { speaker: '', language: 'Auto' };
+  private _currentUrl = '';
 
-  private _init(): void {
-    if (this._ready) return;
-    this._ready = true;
-
-    const enabled  = process.env['TTS_ENABLED']  === 'true';
-    const url      = (process.env['TTS_URL']     ?? '').replace(/\/$/, '');
-    const speaker  = process.env['TTS_SPEAKER']  ?? '';
-    const language = process.env['TTS_LANGUAGE'] ?? 'Auto';
-    const apiKey   = process.env['TTS_API_KEY']  ?? '';
-
-    this._config = { speaker, language };
-
-    if (enabled && url) {
-      this._adapter = new HttpTTSAdapter(url, apiKey);
-      console.info(`[TTS] 已启用: url=${url} speaker=${speaker || '(default)'}`);
+  /**
+   * 配置当前 TTS provider。传 null 则禁用。
+   */
+  configure(provider: TTSProviderConfig | null): void {
+    if (provider) {
+      const url = provider.baseUrl.replace(/\/$/, '');
+      this._adapter = new HttpTTSAdapter(url, provider.apiKey);
+      this._config = { speaker: provider.speaker, language: provider.language };
+      this._currentUrl = url;
+      console.info(`[TTS] 已配置: url=${url} speaker=${provider.speaker}`);
     } else {
       this._adapter = null;
-      if (enabled) {
-        console.warn('[TTS] TTS_ENABLED=true 但 TTS_URL 未配置');
-      }
+      this._config = { speaker: '', language: 'Auto' };
+      this._currentUrl = '';
+      console.info('[TTS] 已禁用');
     }
-  }
-
-  reset(): void {
-    this._ready   = false;
-    this._adapter = null;
   }
 
   get isEnabled(): boolean {
-    this._init();
     return this._adapter !== null;
   }
 
-  debugInfo() {
-    return {
-      TTS_ENABLED:  process.env['TTS_ENABLED'],
-      TTS_URL:      process.env['TTS_URL'],
-      TTS_SPEAKER:  process.env['TTS_SPEAKER'],
-      TTS_LANGUAGE: process.env['TTS_LANGUAGE'],
-      TTS_API_KEY:  process.env['TTS_API_KEY'] ? '***' : '(empty)',
-      isEnabled:    this.isEnabled,
-    };
+  get currentUrl(): string {
+    return this._currentUrl;
   }
 
   async speak(text: string): Promise<ArrayBuffer> {
-    this._init();
     if (!this._adapter) {
-      throw new Error('TTS 未启用（检查 .env: TTS_ENABLED / TTS_URL）');
+      throw new Error('TTS 未启用');
     }
+    console.log(`[TTS] speak: url=${this._currentUrl}, speaker=${this._config.speaker}, lang=${this._config.language}, text="${text.slice(0, 50)}"`);
     return this._adapter.speak(text, this._config);
   }
 
   async health(): Promise<{ ok: boolean; status?: number; body?: string; error?: string }> {
-    this._init();
-    const url = (process.env['TTS_URL'] ?? '').replace(/\/$/, '');
-    if (!url) return { ok: false, error: 'TTS_URL 未配置' };
+    if (!this._currentUrl) {
+      console.log('[TTS] health: 未配置 URL');
+      return { ok: false, error: 'TTS 未配置' };
+    }
     try {
-      const resp = await fetch(`${url}/health`, { signal: AbortSignal.timeout(5000) });
+      console.log(`[TTS] health: 检查 ${this._currentUrl}/health`);
+      const resp = await fetch(`${this._currentUrl}/health`, { signal: AbortSignal.timeout(5000) });
       const body = await resp.text().catch(() => '');
+      console.log(`[TTS] health: status=${resp.status}, ok=${resp.ok}`);
       return { ok: resp.ok, status: resp.status, body: body.slice(0, 200) };
     } catch (e) {
+      console.warn(`[TTS] health: 失败 - ${String(e)}`);
       return { ok: false, error: String(e) };
     }
   }

@@ -33,3 +33,12 @@ Thumbs.db
 
 devtools/
 docs/
+
+# 内嵌工具二进制（打包时从 extraResources 引用，不进 git）
+tools/uv.exe
+
+# TTS Server 运行时产物
+tts-server*/.venv/
+tts-server*/.server.pid
+tts-server*/models/
+tts-server*/generated_audio/
