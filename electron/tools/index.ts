@@ -30,6 +30,23 @@ import todoTool from './impl/todo';
 import requestAgentMode from './impl/requestAgentMode';  // 🆕 请求 Agent 模式
 import showAvailableTools from './impl/showAvailableTools';  // 🆕 显示可用工具列表
 import switchAgentMode from './impl/switchAgentMode';  // 🆕 切换 Agent 模式
+
+// 🆕 打工人核心工具（文件操作）
+import readFileTool from './impl/readFile';
+import editFileTool from './impl/editFile';
+import listDirectoryTool from './impl/listDirectory';
+import searchFilesTool from './impl/searchFiles';
+
+// 🆕 打工人核心工具（代码执行）
+import executePythonTool from './impl/executePython';
+import executeNodeTool from './impl/executeNode';
+
+// 🆕 打工人核心工具（Git 操作）
+import gitStatusTool from './impl/gitStatus';
+import gitDiffTool from './impl/gitDiff';
+import gitCommitTool from './impl/gitCommit';
+import gitLogTool from './impl/gitLog';
+
 import { skillList } from '../skills/index';
 import { setSkillRegistry } from '../skills/skillContext';
 
@@ -46,7 +63,23 @@ const registry = new ToolRegistry()
   .register(todoTool)          // 任务管理工具（会话级任务追踪）
   .register(requestAgentMode)  // 🆕 请求 Agent 模式工具（Chat→Agent 渐进式升级）
   .register(showAvailableTools) // 🆕 显示可用工具列表（AI 自我感知能力边界）
-  .register(switchAgentMode);  // 🆕 切换 Agent 模式（AI 主动切换）
+  .register(switchAgentMode)   // 🆕 切换 Agent 模式（AI 主动切换）
+  
+  // 🆕 注册打工人核心工具（文件操作）
+  .register(readFileTool)
+  .register(editFileTool)
+  .register(listDirectoryTool)
+  .register(searchFilesTool)
+  
+  // 🆕 注册打工人核心工具（代码执行）
+  .register(executePythonTool)
+  .register(executeNodeTool)
+  
+  // 🆕 注册打工人核心工具（Git 操作）
+  .register(gitStatusTool)
+  .register(gitDiffTool)
+  .register(gitCommitTool)
+  .register(gitLogTool);
 
 // 批量注册所有浏览器工具
 for (const tool of browserTools) {

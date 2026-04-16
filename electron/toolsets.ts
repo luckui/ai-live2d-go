@@ -249,7 +249,7 @@ export const TOOLSETS: Record<string, ToolsetDefinition> = {
   // },
 
   "agent-debug": {
-    description: "Agent 调试模式 - 开发者专用（同 Agent，但暴露系统底层工具）",
+    description: "Agent 调试模式 - 开发者专用（同 Agent，但暴露系统底层工具 + 打工人核心工具）",
     tools: [
       // 核心能力
       "memory",
@@ -258,6 +258,23 @@ export const TOOLSETS: Record<string, ToolsetDefinition> = {
       "manual_manage",
       "run_command",
       "show_available_tools",
+      
+      // 🆕 打工人核心工具（文件操作）
+      "read_file",               // 读取文件（支持行范围）
+      "edit_file",               // 编辑文件（字符串替换）
+      "list_directory",          // 列出目录内容
+      "search_files",            // 搜索文件内容
+      "write_file",              // 写入文件（覆盖/追加），skills
+      
+      // 🆕 打工人核心工具（代码执行）
+      "execute_python",          // 执行 Python 代码
+      "execute_node",            // 执行 Node.js/TypeScript 代码
+      
+      // 🆕 打工人核心工具（Git 操作）
+      "git_status",              // Git 状态
+      "git_diff",                // Git 差异
+      "git_commit",              // Git 提交
+      "git_log",                 // Git 历史
       
       // 浏览器 - 完整工具集
       "browser_open",
@@ -271,12 +288,11 @@ export const TOOLSETS: Record<string, ToolsetDefinition> = {
       
       // Skills
       "open_terminal",
-      "write_file",
       "check_python_env",
       
       // OCR 工具
-      "sys_find_text",
-      "sys_find_text_click",
+      // "sys_find_text",
+      // "sys_find_text_click",
       
       // 系统底层工具（⚠️ 调试用，生产环境不要开启）
       "sys_key_press",           // 键盘按键

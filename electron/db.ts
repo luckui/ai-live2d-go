@@ -238,6 +238,147 @@ export function addMemoryFragment(
 }
 
 /**
+ * 智能分词：自动识别中文并切分
+ * @param text - 输入文本
+ * @returns 关键词数组
+ * 
+ * @example
+ * smartTokenize("上海天气") → ["上海", "天气"]（2-gram 中文切分）
+ * smartTokenize("上海 天气") → ["上海", "天气"]（保留空格分隔）
+ * smartTokenize("Discord上海") → ["Discord", "上海"]（混合文本）
+ */
+export function smartTokenize(text: string): string[] {
+  // 1️⃣ 先按空格、逗号、顿号分割
+  const segments = text.split(/[\s,，、]+/).filter(s => s.trim().length > 0);
+  
+  const keywords: string[] = [];
+  
+  for (const seg of segments) {
+    // 2️⃣ 检测是否为纯中文（连续汉字 ≥2 个）
+    const chineseRegex = /[\u4e00-\u9fa5]/g;
+    const chineseChars = seg.match(chineseRegex);
+    
+    // 如果包含 2 个以上连续汉字，进行 2-gram 切分
+    if (chineseChars && chineseChars.length >= 2) {
+      // 提取所有汉字连续段
+      const chineseBlocks = seg.match(/[\u4e00-\u9fa5]+/g) || [];
+      
+      for (const block of chineseBlocks) {
+        if (block.length === 1) {
+          // 单个汉字：直接加入
+          keywords.push(block);
+        } else if (block.length === 2) {
+          // 两个汉字：直接加入（不需要切分）
+          keywords.push(block);
+        } else {
+          // 3+ 汉字：2-gram 切分
+          // "上海天气" → ["上海", "海天", "天气"]
+          for (let i = 0; i < block.length - 1; i++) {
+            keywords.push(block.substring(i, i + 2));
+          }
+          // 同时保留完整词（提高召回率）
+          keywords.push(block);
+        }
+      }
+      
+      // 3️⃣ 提取非中文部分（如 "Discord上海" 中的 "Discord"）
+      const nonChinese = seg.replace(/[\u4e00-\u9fa5]+/g, '').trim();
+      if (nonChinese.length > 0) {
+        keywords.push(nonChinese);
+      }
+    } else {
+      // 纯英文/数字，直接加入
+      keywords.push(seg);
+    }
+  }
+  
+  // 去重（保持顺序）
+  return [...new Set(keywords)];
+}
+
+/**
+ * 搜索所有对话的记忆片段（智能分词搜索 + 相关性优先排序）
+ * @param query - 搜索关键词（自动识别中文、支持空格分隔）
+ * @param limit - 最多返回条数（默认 20）
+ * @returns 匹配的记忆片段（按相关性排序：核心词全匹配 > 匹配数 > 时间）
+ * 
+ * @example
+ * searchMemoryFragments("上海天气") → 自动切分为 ["上海", "天气"]
+ * searchMemoryFragments("上海 天气 查询") → ["上海", "天气", "查询"]
+ * searchMemoryFragments("Discord上海") → ["Discord", "上海"]
+ */
+export function searchMemoryFragments(query: string, limit = 20): MemoryFragment[] {
+  // 1️⃣ 提取核心关键词（用户原始输入，按空格/逗号分隔）
+  const coreKeywords = query.trim().split(/[\s,，、]+/).filter(k => k.length > 0);
+  
+  // 2️⃣ 智能分词（包含 2-gram，用于提高召回率）
+  const allKeywords = smartTokenize(query);
+  
+  if (allKeywords.length === 0) return [];
+  
+  // 单个关键词：简单 LIKE 查询
+  if (allKeywords.length === 1) {
+    const pattern = `%${allKeywords[0]}%`;
+    return db.prepare(
+      'SELECT * FROM memory_fragments WHERE content LIKE ? ORDER BY created_at DESC LIMIT ?'
+    ).all(pattern, limit) as MemoryFragment[];
+  }
+  
+  // 多个关键词：OR 条件查询（匹配任意关键词即可）
+  const conditions = allKeywords.map(() => 'content LIKE ?').join(' OR ');
+  const patterns = allKeywords.map(k => `%${k}%`);
+  
+  const allMatches = db.prepare(
+    `SELECT * FROM memory_fragments WHERE ${conditions} ORDER BY created_at DESC`
+  ).all(...patterns) as MemoryFragment[];
+  
+  // 3️⃣ 计算相关性得分
+  const scored = allMatches.map(frag => {
+    const content = frag.content.toLowerCase();
+    
+    // 核心关键词匹配数（用户原始输入）
+    const coreMatchCount = coreKeywords.filter(k => content.includes(k.toLowerCase())).length;
+    
+    // 所有关键词匹配数（含 2-gram）
+    const totalMatchCount = allKeywords.filter(k => content.includes(k.toLowerCase())).length;
+    
+    // 是否匹配所有核心关键词（最高优先级）
+    const isFullCoreMatch = coreMatchCount === coreKeywords.length;
+    
+    return { 
+      ...frag, 
+      isFullCoreMatch,     // 核心词全匹配标志
+      coreMatchCount,      // 核心词匹配数
+      totalMatchCount      // 总匹配数
+    };
+  });
+  
+  // 4️⃣ 按相关性排序（优先级：核心词全匹配 > 核心词匹配数 > 总匹配数 > 时间）
+  scored.sort((a, b) => {
+    // 优先级 1：核心词全匹配的排最前
+    if (a.isFullCoreMatch !== b.isFullCoreMatch) {
+      return a.isFullCoreMatch ? -1 : 1;
+    }
+    
+    // 优先级 2：核心词匹配数多的在前
+    if (a.coreMatchCount !== b.coreMatchCount) {
+      return b.coreMatchCount - a.coreMatchCount;
+    }
+    
+    // 优先级 3：总匹配数多的在前
+    if (a.totalMatchCount !== b.totalMatchCount) {
+      return b.totalMatchCount - a.totalMatchCount;
+    }
+    
+    // 优先级 4：时间新的在前
+    return b.created_at - a.created_at;
+  });
+  
+  // 返回前 limit 条（移除得分字段）
+  return scored.slice(0, limit).map(({ isFullCoreMatch, coreMatchCount, totalMatchCount, ...frag }) => frag as MemoryFragment);
+}
+
+/**
  * 统计一个对话中 user + assistant 消息总数（不含 system）。
  * 用于判断是否已积累足够消息触发记忆总结。
  */
