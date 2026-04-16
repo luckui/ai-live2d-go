@@ -14,6 +14,11 @@ dist/
 *.db
 *.db-shm
 *.db-wal
+__pycache__/
+*.py[cod]
+*.pyc
+*.pyo
+*.pyd
 
 # 系统文件
 .DS_Store
