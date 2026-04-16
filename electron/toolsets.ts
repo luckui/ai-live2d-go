@@ -139,6 +139,9 @@ export const TOOLSETS: Record<string, ToolsetDefinition> = {
       // "browser_click_smart",     // 🆕 智能点击（Skill）
       // "browser_type_smart",      // 🆕 智能输入（Skill）
       
+      // TTS 语音管理
+      "manage_tts",              // 🆕 管理本地 TTS 语音合成服务
+
       // 基础工具
       "calculate",               // 计算器
       "get_current_datetime",    // 获取当前时间
@@ -172,6 +175,7 @@ export const TOOLSETS: Record<string, ToolsetDefinition> = {
       "open_terminal",           // Skill: 打开终端
       "write_file",              // Skill: 写入文件
       "check_python_env",        // Skill: 检查 Python 环境
+      "manage_tts",              // 🆕 管理本地 TTS 语音合成服务
       
       // OCR 工具
       // "sys_find_text",           // OCR 查找文字
@@ -295,6 +299,7 @@ export const TOOLSETS: Record<string, ToolsetDefinition> = {
       // Skills
       "open_terminal",
       "check_python_env",
+      "manage_tts",              // 🆕 管理本地 TTS 语音合成服务
       
       // OCR 工具
       // "sys_find_text",

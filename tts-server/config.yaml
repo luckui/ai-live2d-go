@@ -1,0 +1,13 @@
+# TTS Server Configuration
+server:
+  host: "127.0.0.1"
+  port: 9880
+
+# edge-tts engine config
+edge:
+  # Default voice (Chinese female). See /speakers for full list.
+  default_voice: "zh-CN-XiaoxiaoNeural"
+  # Rate adjustment: e.g. "+0%", "+10%", "-10%"
+  rate: "+0%"
+  # Volume adjustment
+  volume: "+0%"

@@ -52,6 +52,15 @@ contextBridge.exposeInMainWorld('ttsSettingsAPI', {
   get:  ()             => ipcRenderer.invoke('tts:config:get'),
   save: (cfg: unknown) => ipcRenderer.invoke('tts:config:save', cfg) as Promise<{ isEnabled: boolean; fileSaved: boolean; debug: Record<string, unknown> }>,
   test: (url: string)  => ipcRenderer.invoke('tts:config:test', url),
+  onConfigChanged: (cb: () => void) =>
+    ipcRenderer.on('tts:config-changed', () => cb()),
+});
+
+contextBridge.exposeInMainWorld('ttsLocalAPI', {
+  status:          () => ipcRenderer.invoke('tts:local:status'),
+  installAndStart: () => ipcRenderer.invoke('tts:local:install-and-start'),
+  start:           () => ipcRenderer.invoke('tts:local:start'),
+  stop:            () => ipcRenderer.invoke('tts:local:stop'),
 });
 
 contextBridge.exposeInMainWorld('memoryAPI', {

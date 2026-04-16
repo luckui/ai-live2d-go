@@ -196,32 +196,27 @@
           <div id="s-tab-tts" class="s-tab-pane s-tab-pane-hidden">
 
             <section class="s-section">
-              <h3 class="s-title">基本配置</h3>
+              <h3 class="s-title">TTS 服务</h3>
               <label class="s-label s-label-row">
-                <span class="s-label-text">启用 TTS 语音合成</span>
+                <span class="s-label-text">启用语音合成</span>
                 <label class="s-toggle">
                   <input type="checkbox" id="tts-enabled" />
                   <span class="s-toggle-slider"></span>
                 </label>
               </label>
               <label class="s-label">服务地址
-                <input id="tts-url" type="text" class="s-input" placeholder="http://your-tts-server" />
-                <span class="s-hint">TTS 服务根地址，不含路径（如 http://8.153.95.187）</span>
+                <input id="tts-url" type="text" class="s-input" placeholder="http://127.0.0.1:9880" />
+                <span class="s-hint">任意兼容的 TTS 服务地址（本地或远程均可）</span>
               </label>
               <label class="s-label">API Key
                 <div class="s-input-row">
-                  <input id="tts-apikey" type="password" class="s-input" placeholder="Bearer Token（留空则不发送认证头）" />
+                  <input id="tts-apikey" type="password" class="s-input" placeholder="留空则不发送认证头" />
                   <button class="s-eye-btn" id="tts-eye-btn">👁</button>
                 </div>
               </label>
-            </section>
-
-            <section class="s-section">
-              <h3 class="s-title">语音参数</h3>
               <div class="s-row-2">
                 <label class="s-label">音色
-                  <input id="tts-speaker" type="text" class="s-input" placeholder="bailu" />
-                  <span class="s-hint">音色 ID，查询服务 /speakers 获取列表</span>
+                  <input id="tts-speaker" type="text" class="s-input" placeholder="xiaoxiao" />
                 </label>
                 <label class="s-label">语言
                   <select id="tts-language" class="s-input">
@@ -233,27 +228,24 @@
                   </select>
                 </label>
               </div>
-            </section>
-
-            <section class="s-section">
-              <h3 class="s-title">运行时状态</h3>
-              <div class="s-status-row">
+              <div class="s-status-row" style="margin-top:8px">
                 <span id="tts-runtime-dot" class="s-status-dot s-status-off"></span>
                 <span id="tts-runtime-text" class="s-status-label">加载中…</span>
+                <button id="tts-test-btn" class="s-small-btn" style="margin-left:auto">🔍 测试连接</button>
+                <span id="tts-status-dot" class="s-status-dot s-status-off" style="margin-left:6px"></span>
+                <span id="tts-status-text" class="s-status-label">-</span>
               </div>
-              <span class="s-hint">反映主进程当前实际读到的配置。若显示“未启用”，请填写上方表单并点「保存设置」</span>
             </section>
 
             <section class="s-section">
-              <h3 class="s-title">连通性测试</h3>
-              <div class="s-test-row">
-                <button id="tts-test-btn" class="s-small-btn">🔍 测试连接</button>
-                <div class="s-status-row" style="margin:0;padding:0">
-                  <span id="tts-status-dot" class="s-status-dot s-status-off"></span>
-                  <span id="tts-status-text" class="s-status-label">-</span>
-                </div>
+              <h3 class="s-title">快捷安装本地服务</h3>
+              <span class="s-hint" style="margin-bottom:8px;display:block">没有 TTS 服务？一键部署免费的 edge-tts 本地服务（需 Python 3.10+）</span>
+              <div style="display:flex;gap:8px;flex-wrap:wrap">
+                <button id="tts-local-install-btn" class="s-small-btn">🚀 一键安装并启动</button>
+                <button id="tts-local-start-btn" class="s-small-btn">▶ 启动</button>
+                <button id="tts-local-stop-btn" class="s-small-btn">⏹ 停止</button>
               </div>
-              <span class="s-hint">测试将对当前填写的服务地址发起 GET /health/ 请求</span>
+              <div id="tts-local-log" class="s-hint" style="margin-top:6px;white-space:pre-wrap;max-height:120px;overflow-y:auto;display:none"></div>
             </section>
 
             <div class="s-save-row">

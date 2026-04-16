@@ -1,0 +1,6 @@
+# Local TTS Server dependencies
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+pydantic>=2.0
+pyyaml>=6.0
+edge-tts>=6.1.0

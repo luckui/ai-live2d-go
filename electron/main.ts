@@ -98,6 +98,7 @@ import { DiscordAdapter } from './bridges/adapters/discord';
 import { WeChatAdapter, qrLogin } from './bridges/adapters/wechat';
 import { ttsService } from './ttsService';
 import { getAgentMode, setAgentMode } from './agentMode';
+import * as ttsServerManager from './ttsServerManager';
 
 // ── 实运行时加载持久化的 LLM 配置 ──────────────────────────────
 
@@ -142,6 +143,21 @@ function loadPersistedConfig(): void {
     }
   } catch {
     // 解析失败时保持默认配置
+  }
+
+  // ── 从 SQLite 恢复 TTS 配置（优先级高于 .env） ──
+  const storedTTS = getSetting('tts_config');
+  if (storedTTS) {
+    try {
+      const tts = JSON.parse(storedTTS) as {
+        enabled: boolean; url: string; apiKey: string; speaker: string; language: string;
+      };
+      process.env['TTS_ENABLED']  = String(tts.enabled);
+      process.env['TTS_URL']      = tts.url;
+      process.env['TTS_API_KEY']  = tts.apiKey;
+      process.env['TTS_SPEAKER']  = tts.speaker;
+      process.env['TTS_LANGUAGE'] = tts.language;
+    } catch { /* 解析失败保持 .env 默认值 */ }
   }
 }
 
@@ -320,7 +336,11 @@ function createWindow(): void {
 
   // ── TTS ──────────────────────────────────────────────────────
   ipcMain.handle('tts:speak', async (_e, text: string) => {
-    if (!ttsService.isEnabled) return null;
+    const enabled = ttsService.isEnabled;
+    if (!enabled) {
+      console.info('[TTS] speak 跳过: isEnabled=false, TTS_ENABLED=' + process.env['TTS_ENABLED'] + ', TTS_URL=' + (process.env['TTS_URL'] || '(empty)'));
+      return null;
+    }
     try {
       const wav = await ttsService.speak(text);
       const data = Buffer.from(wav).toString('base64');
@@ -476,7 +496,7 @@ function createWindow(): void {
   ipcMain.handle('tts:config:save', async (_e, newCfg: {
     enabled: boolean; url: string; apiKey: string; speaker: string; language: string;
   }) => {
-    // ① 先更新内存 env + 重置服务（当前会话立即生效）
+    // ① 更新内存 env + 重置服务（当前会话立即生效）
     process.env['TTS_ENABLED']  = String(newCfg.enabled);
     process.env['TTS_URL']      = newCfg.url;
     process.env['TTS_API_KEY']  = newCfg.apiKey;
@@ -484,7 +504,7 @@ function createWindow(): void {
     process.env['TTS_LANGUAGE'] = newCfg.language;
     ttsService.reset();
 
-    // ② 评断当前是否已有效（reset 后重新初始化）
+    // ② 评断当前是否已有效
     const nowEnabled = ttsService.isEnabled;
     const debug = {
       TTS_ENABLED:  process.env['TTS_ENABLED'],
@@ -495,26 +515,10 @@ function createWindow(): void {
     };
     console.info('[TTS config:save] 保存后状态:', debug);
 
-    // ③ 再持久化到 .env 文件（失败只影响下次重启，不影响当前会话）
-    let fileSaved = false;
-    try {
-      const fs = require('fs') as typeof import('fs');
-      const envPath = getEnvFilePath();
-      let envContent = '';
-      try { envContent = fs.readFileSync(envPath, 'utf-8'); } catch { }
-      const lines = envContent.split('\n').filter(l => !/^TTS_/.test(l.trim()));
-      lines.push(`TTS_ENABLED=${newCfg.enabled}`);
-      lines.push(`TTS_URL=${newCfg.url}`);
-      lines.push(`TTS_API_KEY=${newCfg.apiKey}`);
-      lines.push(`TTS_SPEAKER=${newCfg.speaker}`);
-      lines.push(`TTS_LANGUAGE=${newCfg.language}`);
-      fs.writeFileSync(envPath, lines.join('\n'), 'utf-8');
-      fileSaved = true;
-    } catch (e) {
-      console.warn('[TTS config] 写入 .env 失败（仅影响持久化）:', (e as Error).message);
-    }
+    // ③ 持久化到 SQLite（和 LLM 设置统一方式，不触发 HMR）
+    setSetting('tts_config', JSON.stringify(newCfg));
 
-    return { isEnabled: nowEnabled, fileSaved, debug };
+    return { isEnabled: nowEnabled, fileSaved: true, debug };
   });
 
   ipcMain.handle('tts:config:test', async (_e, url: string) => {
@@ -528,11 +532,30 @@ function createWindow(): void {
       return { ok: false, error: String(e) };
     }
   });
+
+  // ── TTS 本地服务管理（设置 UI 用）──────────────────────────────
+  ipcMain.handle('tts:local:status', () => ttsServerManager.getStatus());
+
+  ipcMain.handle('tts:local:install-and-start', async () => {
+    const logs: string[] = [];
+    const result = await ttsServerManager.installAndStart((msg) => logs.push(msg));
+    return { ...result, logs };
+  });
+
+  ipcMain.handle('tts:local:start', () => ttsServerManager.startServer());
+  ipcMain.handle('tts:local:stop', () => ttsServerManager.stopServer());
 }
 
 app.whenReady().then(() => {
   initDatabase();
   loadPersistedConfig();
+
+  // 注入依赖给 ttsServerManager（bundled 环境下 require 无法获取同一单例）
+  ttsServerManager.initDeps({
+    resetTTS: () => ttsService.reset(),
+    setSetting,
+  });
+
   createWindow();
 
   // ── 启动平台桥接（Discord 等）：使用首个对话 ID 作为默认绑定对话 ──

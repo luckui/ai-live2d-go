@@ -60,6 +60,7 @@ import checkPythonEnvTool from './impl/checkPythonEnv';
 import writeFileTool from './impl/writeFile';
 import discordSendFileTool from './impl/discordSendFile';
 import wechatSendFileTool from './impl/wechatSendFile';
+import manageTTSTool from './impl/manageTTS';
 
 import { setToolRegistry } from './toolContext';
 
@@ -108,7 +109,8 @@ const registry = new ToolRegistry()
   .register(checkPythonEnvTool)
   .register(writeFileTool)
   .register(discordSendFileTool)
-  .register(wechatSendFileTool);
+  .register(wechatSendFileTool)
+  .register(manageTTSTool);
 
 // 批量注册所有浏览器工具
 for (const tool of browserTools) {

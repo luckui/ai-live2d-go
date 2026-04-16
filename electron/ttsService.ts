@@ -2,25 +2,21 @@
 /**
  * TTS 服务模块（主进程）
  *
- * 采用适配器模式，便于日后接入更多 TTS 服务商：
- *   - MyTTSAdapter   当前自建 FastAPI TTS（POST /tts，返回 WAV 流）
- *   - (future) EdgeTTSAdapter
- *   - (future) AzureTTSAdapter
- *   - (future) OpenAITTSAdapter
+ * 统一适配器：任何符合 POST /tts/generate 规范的 HTTP TTS 服务均可接入，
+ * 无论是远程服务器、本地 tts-server、还是第三方 API，只要 URL 对就行。
  *
  * 环境变量（.env）：
  *   TTS_ENABLED=true
- *   TTS_URL=http://8.153.95.187      ← 服务根地址，不含路径
- *   TTS_SPEAKER=bailu                ← 音色名称，通过 GET /speakers 查询可用值
- *   TTS_LANGUAGE=Auto                ← 可选，默认 Auto
- *   TTS_API_KEY=<key>                ← Bearer Token 认证
+ *   TTS_URL=http://127.0.0.1:9880    ← 任意 TTS 服务地址（本地或远程皆可）
+ *   TTS_SPEAKER=xiaoxiao              ← 音色名称
+ *   TTS_LANGUAGE=Auto                 ← 可选，默认 Auto
+ *   TTS_API_KEY=<key>                 ← 可选，Bearer Token 认证
  */
 
-// ── Adapter 接口（所有 TTS 服务商实现此接口）────────────────────────
+// ── 接口定义 ────────────────────────────────────────────────────────
 
 export interface TTSAdapter {
   readonly name: string;
-  /** 合成文本，返回 WAV 音频的 ArrayBuffer */
   speak(text: string, config: TTSAdapterConfig): Promise<ArrayBuffer>;
 }
 
@@ -29,18 +25,20 @@ export interface TTSAdapterConfig {
   language: string;
 }
 
-// ── MyTTSAdapter：当前自建 FastAPI TTS ──────────────────────────────
-// 接口规范见 example_tts.txt：
-//   POST /tts   body: { text, speaker, language, ... }  → WAV 流
-//   GET  /speakers                                       → 音色列表
+// ── 统一 HTTP TTS 适配器 ────────────────────────────────────────────
+// 规范：POST /tts/generate  body: { text, speaker, language }  → 音频流
+//       GET  /health                                            → 健康检查
 
-class MyTTSAdapter implements TTSAdapter {
-  readonly name = 'my-tts';
+class HttpTTSAdapter implements TTSAdapter {
+  readonly name: string;
 
   constructor(
     private readonly baseUrl: string,
-    private readonly apiKey: string, // Bearer Token，空则不加头
-  ) {}
+    private readonly apiKey: string = '',
+  ) {
+    // 用 URL 来标识，方便调试
+    this.name = `http-tts(${baseUrl})`;
+  }
 
   async speak(text: string, config: TTSAdapterConfig): Promise<ArrayBuffer> {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -54,12 +52,12 @@ class MyTTSAdapter implements TTSAdapter {
         speaker:  config.speaker,
         language: config.language,
       }),
-      signal: AbortSignal.timeout(120_000), // TTS 合成最长 120 秒
+      signal: AbortSignal.timeout(120_000),
     });
 
     if (!resp.ok) {
       const errText = await resp.text().catch(() => '');
-      throw new Error(`TTS API ${resp.status}: ${errText.slice(0, 200)}`);
+      throw new Error(`TTS ${resp.status} [${this.baseUrl}]: ${errText.slice(0, 200)}`);
     }
 
     return resp.arrayBuffer();
@@ -69,12 +67,9 @@ class MyTTSAdapter implements TTSAdapter {
 // ── TTS 服务单例 ────────────────────────────────────────────────────
 
 class TTSService {
-  // 不在构造函数里读 env，避免 dotenv.config() 未执行时就初始化
-  // 每次访问 isEnabled / speak() 时懒加载
-
   private _ready = false;
   private _adapter: TTSAdapter | null = null;
-  private _config: { speaker: string; language: string } = { speaker: '', language: 'Auto' };
+  private _config: TTSAdapterConfig = { speaker: '', language: 'Auto' };
 
   private _init(): void {
     if (this._ready) return;
@@ -86,24 +81,19 @@ class TTSService {
     const language = process.env['TTS_LANGUAGE'] ?? 'Auto';
     const apiKey   = process.env['TTS_API_KEY']  ?? '';
 
-    console.info(`[TTS] init: enabled=${enabled} url="${url}" speaker="${speaker}" auth=${apiKey ? 'Bearer ***' : 'none'}`);
-
     this._config = { speaker, language };
 
-    if (enabled && url && speaker) {
-      this._adapter = new MyTTSAdapter(url, apiKey);
-      console.info(`[TTS] 已启用 ${this._adapter.name}，speaker=${speaker}`);
+    if (enabled && url) {
+      this._adapter = new HttpTTSAdapter(url, apiKey);
+      console.info(`[TTS] 已启用: url=${url} speaker=${speaker || '(default)'}`);
     } else {
       this._adapter = null;
       if (enabled) {
-        console.warn('[TTS] TTS_ENABLED=true 但 TTS_URL 或 TTS_SPEAKER 未配置，TTS 已禁用');
-      } else {
-        console.info('[TTS] TTS_ENABLED != true，TTS 未启用');
+        console.warn('[TTS] TTS_ENABLED=true 但 TTS_URL 未配置');
       }
     }
   }
 
-  /** 重置服务，下次访问时重新读取 env（UI 保存配置后调用）*/
   reset(): void {
     this._ready   = false;
     this._adapter = null;
@@ -114,7 +104,6 @@ class TTSService {
     return this._adapter !== null;
   }
 
-  /** 主进程 debug 用：返回当前 env 读到的原始值 */
   debugInfo() {
     return {
       TTS_ENABLED:  process.env['TTS_ENABLED'],
@@ -126,22 +115,20 @@ class TTSService {
     };
   }
 
-  /** 合成文本并返回 WAV ArrayBuffer */
   async speak(text: string): Promise<ArrayBuffer> {
     this._init();
     if (!this._adapter) {
-      throw new Error('TTS 未启用（检查 .env 中的 TTS_ENABLED / TTS_URL / TTS_SPEAKER）');
+      throw new Error('TTS 未启用（检查 .env: TTS_ENABLED / TTS_URL）');
     }
     return this._adapter.speak(text, this._config);
   }
 
-  /** 健康检查：GET /health */
   async health(): Promise<{ ok: boolean; status?: number; body?: string; error?: string }> {
     this._init();
     const url = (process.env['TTS_URL'] ?? '').replace(/\/$/, '');
     if (!url) return { ok: false, error: 'TTS_URL 未配置' };
     try {
-      const resp = await fetch(`${url}/health/`, { signal: AbortSignal.timeout(5000) });
+      const resp = await fetch(`${url}/health`, { signal: AbortSignal.timeout(5000) });
       const body = await resp.text().catch(() => '');
       return { ok: resp.ok, status: resp.status, body: body.slice(0, 200) };
     } catch (e) {

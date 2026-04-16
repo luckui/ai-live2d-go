@@ -78,6 +78,13 @@ declare global {
       get(): Promise<TTSConfig>;
       save(cfg: TTSConfig): Promise<{ isEnabled: boolean; fileSaved: boolean; debug: Record<string, unknown> }>;
       test(url: string): Promise<{ ok: boolean; status?: number; body?: string; error?: string }>;
+      onConfigChanged?(cb: () => void): void;
+    };
+    ttsLocalAPI?: {
+      status(): Promise<{ installed: boolean; running: boolean; healthy: boolean; pid: number | null; port: number; serverDir: string }>;
+      installAndStart(): Promise<{ ok: boolean; detail: string; logs?: string[] }>;
+      start(): Promise<{ ok: boolean; detail: string }>;
+      stop(): Promise<{ ok: boolean; detail: string }>;
     };
     memoryAPI?: {
       export(): Promise<MemoryExportResult>;
@@ -351,21 +358,34 @@ async function startWeChatQRLogin(): Promise<void> {
 
 // ── TTS UI ────────────────────────────────────────────
 
-async function refreshTTSRuntimeStatus(): Promise<void> {
+async function refreshTTSRuntimeStatus(): Promise<boolean> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const ttsAPI = (window as any).ttsAPI as { isEnabled(): Promise<boolean> } | undefined;
+  const ttsAPI = (window as any).ttsAPI as { isEnabled(): Promise<boolean>; health(): Promise<{ ok: boolean }> } | undefined;
   const dot  = document.getElementById('tts-runtime-dot')  as HTMLElement | null;
   const text = document.getElementById('tts-runtime-text') as HTMLElement | null;
-  if (!dot || !text) return;
+  if (!dot || !text) return false;
   try {
     const enabled = ttsAPI ? await ttsAPI.isEnabled() : false;
-    dot.className   = `s-status-dot ${enabled ? 's-status-on' : 's-status-err'}`;
-    text.textContent = enabled
-      ? '\u2713 \u5df2\u542f\u7528\uff08\u8bed\u97f3\u5c06\u5728\u56de\u590d\u540e\u81ea\u52a8\u64ad\u653e\uff09'
-      : '\u26a0\ufe0f \u672a\u542f\u7528\uff08\u8bf7\u586b\u5199\u8868\u5355\u5e76\u70b9\u201c\u4fdd\u5b58\u8bbe\u7f6e\u201d\uff09';
+    if (!enabled) {
+      dot.className = 's-status-dot s-status-err';
+      text.textContent = '⚠️ 未启用';
+      return false;
+    }
+    // 配置已启用，再检查服务是否真的可达
+    const health = ttsAPI ? await ttsAPI.health() : { ok: false };
+    if (health.ok) {
+      dot.className = 's-status-dot s-status-on';
+      text.textContent = '✓ 已启用（语音将在回复后自动播放）';
+      return true;
+    } else {
+      dot.className = 's-status-dot s-status-err';
+      text.textContent = '⚠️ 服务不可达（请检查服务地址或启动本地服务）';
+      return false;
+    }
   } catch {
     dot.className   = 's-status-dot s-status-off';
-    text.textContent = '\u65e0\u6cd5\u83b7\u53d6\u72b6\u6001';
+    text.textContent = '无法获取状态';
+    return false;
   }
 }
 
@@ -440,12 +460,15 @@ async function importMemory(): Promise<void> {
 async function loadTTSUI(): Promise<void> {
   if (!window.ttsSettingsAPI) return;
   const tts = await window.ttsSettingsAPI.get();
-  (document.getElementById('tts-enabled')  as HTMLInputElement).checked  = tts.enabled;
+  // 先填入配置值（URL、音色等）
   (document.getElementById('tts-url')      as HTMLInputElement).value    = tts.url;
   (document.getElementById('tts-apikey')   as HTMLInputElement).value    = tts.apiKey;
   (document.getElementById('tts-speaker')  as HTMLInputElement).value    = tts.speaker;
   (document.getElementById('tts-language') as HTMLSelectElement).value   = tts.language;
-  void refreshTTSRuntimeStatus();
+  // toggle 反映实际运行状态，而不是数据库旧值
+  const actuallyRunning = await refreshTTSRuntimeStatus();
+  (document.getElementById('tts-enabled')  as HTMLInputElement).checked = actuallyRunning;
+  void refreshLocalTTSStatus();
 }
 
 async function saveTTSSettings(): Promise<void> {
@@ -499,6 +522,106 @@ async function runTTSHealthCheck(): Promise<void> {
   } finally {
     btn.disabled = false;
     btn.textContent = '🔍 测试连接';
+  }
+}
+
+// ── 保存（LLM） ────────────────────────────────────────
+
+// ── Local TTS UI ──────────────────────────────────────
+
+async function refreshLocalTTSStatus(): Promise<void> {
+  // 本地服务状态已由上方运行时状态反映，此处仅用于内部调用保持接口一致
+}
+
+/** 将本地服务地址填入表单并保存，使 TTS 立即启用 */
+async function applyLocalTTSToForm(): Promise<void> {
+  (document.getElementById('tts-enabled') as HTMLInputElement).checked = true;
+  (document.getElementById('tts-url')     as HTMLInputElement).value   = 'http://127.0.0.1:9880';
+  (document.getElementById('tts-apikey')  as HTMLInputElement).value   = '';
+  (document.getElementById('tts-speaker') as HTMLInputElement).value   = 'xiaoxiao';
+  await saveTTSSettings();
+}
+
+async function localTTSInstallAndStart(): Promise<void> {
+  const api = (window as any).ttsLocalAPI as Window['ttsLocalAPI'];
+  if (!api) return;
+
+  const btn = document.getElementById('tts-local-install-btn') as HTMLButtonElement;
+  const log = document.getElementById('tts-local-log')         as HTMLElement;
+  btn.disabled = true;
+  btn.textContent = '安装中…';
+  log.style.display = 'block';
+  log.textContent = '正在安装，请稍候…\n';
+
+  try {
+    const result = await api.installAndStart();
+    if (result.logs) {
+      log.textContent = result.logs.join('\n') + '\n' + result.detail;
+    } else {
+      log.textContent = result.detail;
+    }
+
+    if (result.ok) {
+      btn.textContent = '✅ 完成';
+      await applyLocalTTSToForm();
+    } else {
+      btn.textContent = '❌ 失败，点击重试';
+    }
+  } catch (e) {
+    log.textContent = `错误: ${String(e)}`;
+    btn.textContent = '❌ 失败，点击重试';
+  } finally {
+    btn.disabled = false;
+    void refreshLocalTTSStatus();
+    void refreshTTSRuntimeStatus();
+  }
+}
+
+async function localTTSStart(): Promise<void> {
+  const api = (window as any).ttsLocalAPI as Window['ttsLocalAPI'];
+  if (!api) return;
+
+  const btn = document.getElementById('tts-local-start-btn') as HTMLButtonElement;
+  btn.disabled = true;
+  btn.textContent = '启动中…';
+
+  try {
+    const result = await api.start();
+    if (result.ok) {
+      // 启动成功后自动填入本地地址并保存
+      await applyLocalTTSToForm();
+    } else {
+      const log = document.getElementById('tts-local-log') as HTMLElement;
+      log.style.display = 'block';
+      log.textContent = result.detail;
+    }
+  } catch (e) {
+    console.error('[TTS local start]', e);
+  } finally {
+    btn.textContent = '▶ 启动';
+    btn.disabled = false;
+    void refreshLocalTTSStatus();
+    void refreshTTSRuntimeStatus();
+  }
+}
+
+async function localTTSStop(): Promise<void> {
+  const api = (window as any).ttsLocalAPI as Window['ttsLocalAPI'];
+  if (!api) return;
+
+  const btn = document.getElementById('tts-local-stop-btn') as HTMLButtonElement;
+  btn.disabled = true;
+  btn.textContent = '停止中…';
+
+  try {
+    await api.stop();
+  } catch (e) {
+    console.error('[TTS local stop]', e);
+  } finally {
+    btn.textContent = '⏹ 停止';
+    btn.disabled = false;
+    void refreshLocalTTSStatus();
+    void refreshTTSRuntimeStatus();
   }
 }
 
@@ -586,6 +709,14 @@ export function openSettings(): void {
   void loadDiscordUI();
   void loadWeChatUI();
   void loadTTSUI();
+
+  // 当 Agent 或主进程修改了 TTS 配置时自动刷新设置界面（仅注册一次）
+  if (!(window as any).__ttsConfigListenerRegistered) {
+    (window as any).__ttsConfigListenerRegistered = true;
+    window.ttsSettingsAPI?.onConfigChanged?.(() => {
+      void loadTTSUI();
+    });
+  }
 }
 
 export function closeSettings(): void {
@@ -685,6 +816,9 @@ export function initSettings(): void {
   // ── TTS 表单事件 ─────────────────────────────────────
   document.getElementById('tts-save-btn')?.addEventListener('click', () => void saveTTSSettings());
   document.getElementById('tts-test-btn')?.addEventListener('click', () => void runTTSHealthCheck());
+  document.getElementById('tts-local-install-btn')?.addEventListener('click', () => void localTTSInstallAndStart());
+  document.getElementById('tts-local-start-btn')?.addEventListener('click', () => void localTTSStart());
+  document.getElementById('tts-local-stop-btn')?.addEventListener('click', () => void localTTSStop());
 
   document.getElementById('tts-eye-btn')?.addEventListener('click', () => {
     const input = document.getElementById('tts-apikey') as HTMLInputElement;
