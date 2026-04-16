@@ -2,13 +2,14 @@
 import aiConfig, { LLMProviderConfig } from './ai.config';
 import { addMessage, getRecentContext, getMessages, renameConversation } from './db';
 import { toolRegistry } from './tools/index';
-import { getCurrentToolsets } from './agentMode';
+import { getCurrentToolsets, getAgentMode } from './agentMode';
 import type { ChatMessage, ContentPart, ToolSchema } from './tools/types';
 import { isToolImageResult } from './tools/types';
 import { memoryManager, globalMemoryManager, recordMessageActivity } from './memory/index';
 import { stripThinkTags } from './utils/textUtils';
 import { fetchCompletion } from './llmClient';
 import { getManualTopicsForPrompt } from './tools/impl/manual';
+import { buildDeveloperPrompt } from './prompts/developer';
 
 // ── 工具调用调试事件 ─────────────────────────────────────
 /** 单次工具调用的调试记录（推送给渲染层展示） */
@@ -32,6 +33,18 @@ let _toolEventListener: ((ev: ToolCallEvent) => void) | null = null;
 /** 由 main.ts 调用，注册工具调用调试事件回调（传 null 取消） */
 export function setToolEventListener(cb: ((ev: ToolCallEvent) => void) | null): void {
   _toolEventListener = cb;
+}
+
+// ── AI 中断控制 ─────────────────────────────────────
+let currentAbortController: AbortController | null = null;
+
+/** 由 main.ts 调用，中断当前正在进行的 AI 请求 */
+export function stopCurrentAI(): void {
+  if (currentAbortController) {
+    console.log('[AI Service] 用户请求中断 AI');
+    currentAbortController.abort();
+    currentAbortController = null;
+  }
 }
 
 /** 内部：执行工具并同时发射调试事件 */
@@ -157,14 +170,45 @@ async function callWithToolLoop(
   toolSchemas?: ToolSchema[],
   conversationId?: string,
 ): Promise<string> {
+  // 🆕 创建 AbortController 用于中断请求
+  currentAbortController = new AbortController();
+  const signal = currentAbortController.signal;
+
+  try {
+    return await _callWithToolLoopInternal(provider, messages, toolSchemas, conversationId, signal);
+  } catch (e) {
+    if ((e as Error).name === 'AbortError' || signal.aborted) {
+      throw new Error('AI 回答已被用户中断');
+    }
+    throw e;
+  } finally {
+    currentAbortController = null;
+  }
+}
+
+async function _callWithToolLoopInternal(
+  provider: LLMProviderConfig,
+  messages: ChatMessage[],
+  toolSchemas?: ToolSchema[],
+  conversationId?: string,
+  signal?: AbortSignal
+): Promise<string> {
   const withTools = !!toolSchemas?.length;
   // 在副本上操作，不污染调用方的数组
   const msgBuf: ChatMessage[] = [...messages];
   let antiHallucinationNudgeUsed = false;
 
-  const MAX_ROUNDS = 10;
+  // 🆕 开发者模式：大幅增加循环次数，依赖用户主动停止
+  const currentMode = getAgentMode();
+  const MAX_ROUNDS = currentMode === 'developer' ? 200 : 25;
+  
   for (let round = 0; round < MAX_ROUNDS; round++) {
-    const data = await fetchCompletion(provider, msgBuf, withTools ? toolSchemas : undefined);
+    // 🆕 检查中断信号
+    if (signal?.aborted) {
+      throw new Error('AI 回答已被用户中断');
+    }
+
+    const data = await fetchCompletion(provider, msgBuf, withTools ? toolSchemas : undefined, signal);
     const choice = data.choices[0];
 
     // ── 无工具调用 → 返回最终文本 ──
@@ -350,7 +394,13 @@ export async function sendChatMessage(
     globalMemoryManager.buildGlobalMemoryAppend();
   // 动态注入说明书目录（每次对话初始化时刷新，新增/删除文件立即生效）
   const manualTopics = getManualTopicsForPrompt();
-  const systemContent = (provider.systemPrompt ?? '') + manualTopics + memoryAppend;
+
+  // 🆕 Developer 模式：切换为软件工程师专属提示词
+  const currentAgentMode = getAgentMode();
+  const basePrompt = currentAgentMode === 'developer'
+    ? buildDeveloperPrompt()
+    : (provider.systemPrompt ?? '');
+  const systemContent = basePrompt + manualTopics + memoryAppend;
 
   const messages: ChatMessage[] = [
     ...(systemContent ? [{ role: 'system' as const, content: systemContent }] : []),

@@ -56,6 +56,8 @@ const STEALTH_SCRIPT = `
 class BrowserSession {
   private _context: BrowserContext | null = null;
   private _page: Page | null = null;
+  private _consoleErrors: Array<{ type: string; text: string; timestamp: number }> = [];
+  private _pageErrors: Array<{ message: string; timestamp: number }> = [];
 
   /**
    * 获取或创建当前 Page，自动启动持久化浏览器。
@@ -87,6 +89,7 @@ class BrowserSession {
       // 避免 AI 还在操作旧页面、不知道新页面已存在的问题。
       this._context.on('page', (newPage: Page) => {
         this._page = newPage;
+        this._setupPageListeners(newPage);
         // 等页面加载稳定后再允许操作
         newPage.waitForLoadState('domcontentloaded').catch(() => {});
       });
@@ -97,9 +100,65 @@ class BrowserSession {
       // 复用已有 pages（比如用户手动打开的标签）
       const pages = this._context.pages();
       this._page = pages.length > 0 ? pages[pages.length - 1] : await this._context.newPage();
+      this._setupPageListeners(this._page);
     }
 
     return this._page;
+  }
+
+  /**
+   * 为页面设置控制台和错误监听器
+   */
+  private _setupPageListeners(page: Page): void {
+    // 监听控制台消息（错误和警告）
+    page.on('console', (msg) => {
+      const type = msg.type();
+      if (type === 'error' || type === 'warning') {
+        this._consoleErrors.push({
+          type,
+          text: msg.text(),
+          timestamp: Date.now()
+        });
+        // 只保留最近 50 条错误
+        if (this._consoleErrors.length > 50) {
+          this._consoleErrors.shift();
+        }
+      }
+    });
+
+    // 监听页面错误（未捕获的异常）
+    page.on('pageerror', (error) => {
+      this._pageErrors.push({
+        message: error.message,
+        timestamp: Date.now()
+      });
+      // 只保留最近 50 条错误
+      if (this._pageErrors.length > 50) {
+        this._pageErrors.shift();
+      }
+    });
+  }
+
+  /**
+   * 获取最近的控制台错误（最多返回最近的 count 条）
+   */
+  getRecentConsoleErrors(count: number = 10): Array<{ type: string; text: string; timestamp: number }> {
+    return this._consoleErrors.slice(-count);
+  }
+
+  /**
+   * 获取最近的页面错误（最多返回最近的 count 条）
+   */
+  getRecentPageErrors(count: number = 10): Array<{ message: string; timestamp: number }> {
+    return this._pageErrors.slice(-count);
+  }
+
+  /**
+   * 清除错误记录（通常在页面导航后调用）
+   */
+  clearErrors(): void {
+    this._consoleErrors = [];
+    this._pageErrors = [];
   }
 
   /** 获取当前页面（不自动创建）；浏览器未打开时返回 null */

@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Skill: open_terminal
  *
  * 在 Windows 系统上打开一个命令行终端。
@@ -14,8 +14,8 @@
  * OCR 用 Windows Runtime 内置 API，Win10/11 零依赖可用。
  */
 
-import type { ToolDefinition, ToolExecuteResult } from '../../tools/types';
-import { getSkillRegistry } from '../skillContext';
+import type { ToolDefinition, ToolExecuteResult } from '../types';
+import { getToolRegistry } from '../toolContext';
 import { clipboard } from 'electron';
 
 interface OpenTerminalParams {
@@ -66,7 +66,7 @@ const openTerminalSkill: ToolDefinition<OpenTerminalParams> = {
   isSkill: true,
 
   async execute({ type = 'cmd', command }): Promise<ToolExecuteResult> {
-    const reg = getSkillRegistry();
+    const reg = getToolRegistry();
     const termCmd = TERMINAL_CMD[type] ?? 'cmd';
     const steps: string[] = [];
 

@@ -21,6 +21,8 @@ interface RunCommandParams {
   timeoutMs?: number;
   /** 工作目录，默认继承当前进程 cwd */
   cwd?: string;
+  /** 额外环境变量，会与当前 process.env 合并 */
+  env?: Record<string, string>;
 }
 
 const runCommandTool: ToolDefinition<RunCommandParams> = {
@@ -34,6 +36,13 @@ const runCommandTool: ToolDefinition<RunCommandParams> = {
         '非零退出码不报错，输出中会注明退出码。\n' +
         '【适用场景】查询系统信息（python --version、conda env list、node -v 等）、\n' +
         '执行脚本、读取命令行工具输出等。\n' +
+        '【⚠️ 工作目录】需要在特定目录执行时，必须用 cwd 参数指定绝对路径，\n' +
+        '  不要用 cd 切换目录！cmd.exe 的 cd 不能跨盘符（如从 D: 切到 C:）。\n' +
+        '  ❌ 错误：command="cd C:\\Users\\xxx && npm init"\n' +
+        '  ✅ 正确：command="npm init -y", cwd="C:\\Users\\xxx"\n' +
+        '【⚠️ 交互式命令】脚手架/初始化命令（npm create、npx create-xxx）必须传 env={"CI":"true"} 跳过交互！\n' +
+        '  ✅ 正确：command="npm create vite@latest . -- --template vanilla", cwd="项目路径", env={"CI":"true"}\n' +
+        '  ❌ 错误：不传 env，交互式命令会静默失败（Operation cancelled）。\n' +
         '【注意】避免执行破坏性命令（rm -rf、format 等），该工具不做安全检查。\n' +
         '【提示】不确定命令写法时，先调用 read_manual(topic="命令行操作") 查阅规范，\n' +
         '        或调用 read_manual() 列出全部说明书主题。',
@@ -50,7 +59,13 @@ const runCommandTool: ToolDefinition<RunCommandParams> = {
           },
           cwd: {
             type: 'string',
-            description: '工作目录（绝对路径），默认使用进程当前目录。',
+            description: '工作目录（绝对路径）。⚠️ 必须用此参数指定目录，不要在 command 中用 cd！cmd.exe 的 cd 无法跨盘符。',
+          },
+          env: {
+            type: 'object',
+            description: '额外环境变量（key-value 对象），会与系统环境变量合并。\n' +
+              '⚠️ 脚手架/初始化命令（npm create vite、npx create-xxx）必须传 {"CI": "true"} 跳过交互提示！\n' +
+              '示例：env={"CI": "true", "NODE_ENV": "production"}',
           },
         },
         required: ['command'],
@@ -58,7 +73,32 @@ const runCommandTool: ToolDefinition<RunCommandParams> = {
     },
   },
 
-  async execute({ command, timeoutMs = 30000, cwd }) {
+  async execute({ command, timeoutMs = 30000, cwd, env }) {
+    // 检测常驻进程命令（开发服务器、HTTP 服务器等）
+    const longRunningPatterns = [
+      /npm\s+run\s+(dev|start|serve)/i,
+      /python\s+-m\s+(http\.server|SimpleHTTPServer)/i,
+      /node\s+.*server/i,
+      /vite\s+(--)?(?!build)/i,  // vite 但不是 vite build
+      /webpack-dev-server/i,
+      /ng\s+serve/i,  // Angular CLI
+    ];
+
+    const isLongRunning = longRunningPatterns.some(pattern => pattern.test(command));
+
+    if (isLongRunning) {
+      return (
+        '❌ 检测到常驻进程命令（开发服务器 / HTTP 服务器），此工具会超时失败！\n' +
+        `命令：${command}\n\n` +
+        '【正确做法】用 start_terminal 工具启动并监控输出：\n' +
+        `  start_terminal({ command: "${command.replace(/"/g, '\\"')}", cwd: "项目目录绝对路径" })\n\n` +
+        '该工具会异步启动进程、持续监控输出，返回 UUID 用于后续操作：\n' +
+        '  • get_terminal_output({ id }) - 获取累积输出\n' +
+        '  • send_to_terminal({ id, input }) - 发送交互式输入\n' +
+        '  • kill_terminal({ id }) - 终止进程'
+      );
+    }
+
     return new Promise<string>((resolve) => {
       const isWin = process.platform === 'win32';
       const shell = isWin ? 'cmd.exe' : '/bin/sh';
@@ -67,12 +107,16 @@ const runCommandTool: ToolDefinition<RunCommandParams> = {
       // > nul 屏蔽 "Active code page: 65001" 这行提示
       const actualCommand = isWin ? `chcp 65001 > nul && ${command}` : command;
 
+      // 合并环境变量：用户传入的 env 覆盖系统 env
+      const mergedEnv = env ? { ...process.env, ...env } : process.env;
+
       exec(
         actualCommand,
         {
           shell,
           timeout: timeoutMs,
           cwd: cwd ?? process.cwd(),
+          env: mergedEnv,
           encoding: 'utf8',
           maxBuffer: 1024 * 1024,  // 1MB 缓冲
           windowsHide: true,

@@ -26,6 +26,8 @@ contextBridge.exposeInMainWorld('chatAPI', {
     ipcRenderer.invoke('chat:rename-conversation', id, title),
   send: (conversationId: string, content: string) =>
     ipcRenderer.invoke('chat:send', conversationId, content),
+  stopAI: () =>
+    ipcRenderer.invoke('chat:stop'),
 });
 
 contextBridge.exposeInMainWorld('settingsAPI', {

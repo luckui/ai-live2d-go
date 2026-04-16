@@ -37,7 +37,7 @@
           <div class="chat-header-right no-drag">
             <button id="sessions-btn" class="ctrl-btn" title="历史对话">☰</button>
             <!-- Agent 模式切换器 -->
-            <button id="agent-mode-btn" class="ctrl-btn agent-mode-btn" title="切换 Chat/Agent 模式">
+            <button id="agent-mode-btn" class="ctrl-btn agent-mode-btn" title="切换模式：Chat/Agent/Debug/Dev">
               <span id="agent-mode-text">Agent</span>
             </button>
             <button id="settings-btn" class="ctrl-btn" title="LLM 设置">⚙</button>
@@ -53,6 +53,18 @@
 
           <!-- 聊天视图 -->
           <div id="chat-view">
+            <!-- Todo 任务清单面板 -->
+            <div id="todo-panel" style="display: none;">
+              <div class="todo-header">
+                <span class="todo-title">📋 任务清单</span>
+                <div class="todo-controls">
+                  <button id="todo-toggle-btn" class="todo-toggle" title="折叠/展开">▾</button>
+                  <button id="todo-close-btn" class="todo-close" title="关闭清单">✕</button>
+                </div>
+              </div>
+              <div id="todo-list" class="todo-list-expanded"></div>
+            </div>
+
             <!-- 消息列表 -->
             <div id="messages-container">
               <div id="messages"></div>
@@ -130,7 +142,10 @@
                 <h3 class="s-title">服务商</h3>
                 <button id="s-add-btn" class="s-small-btn">+ 新增</button>
               </div>
-              <div id="s-provider-pills"></div>
+              <label class="s-label">选择服务商
+                <select id="s-provider-select" class="s-input">
+                </select>
+              </label>
             </section>
 
             <!-- 服务商表单 -->

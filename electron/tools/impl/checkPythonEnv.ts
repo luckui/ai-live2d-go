@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Skill: check_python_env
  *
  * 检查用户系统的 Python 开发环境，包括：
@@ -14,8 +14,8 @@
  * AI 根据内容整理后用自然语言告诉用户。
  */
 
-import type { ToolDefinition, ToolExecuteResult } from '../../tools/types';
-import { getSkillRegistry } from '../skillContext';
+import type { ToolDefinition, ToolExecuteResult } from '../types';
+import { getToolRegistry } from '../toolContext';
 
 const checkPythonEnvSkill: ToolDefinition<Record<never, never>> = {
   schema: {
@@ -39,7 +39,7 @@ const checkPythonEnvSkill: ToolDefinition<Record<never, never>> = {
   isSkill: true,
 
   async execute(): Promise<ToolExecuteResult> {
-    const registry = getSkillRegistry();
+    const registry = getToolRegistry();
     const run = (cmd: string) =>
       registry.execute('run_command', JSON.stringify({ command: cmd, timeoutMs: 10000 })) as Promise<string>;
 

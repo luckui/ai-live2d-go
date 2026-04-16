@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Skill: browser_open
  *
  * 升级版导航 Skill —— 导航完成后自动附带页面概况（标题/URL/类型/链接摘要），
@@ -16,9 +16,9 @@
  * 导航后如需深度提取页面内容，调用 browser_read_page(detail="full")。
  */
 
-import type { ToolDefinition } from '../../tools/types';
-import { browserSession } from '../../tools/impl/browserSession';
-import { readPageSummary } from '../../tools/impl/browser';
+import type { ToolDefinition } from '../types';
+import { browserSession } from '../impl/browserSession';
+import { readPageSummary } from '../impl/browser';
 
 interface BrowserOpenParams {
   query: string;

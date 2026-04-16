@@ -89,7 +89,7 @@ import {
   getStructuredGlobalMemory,
   setStructuredGlobalMemory,
 } from './db';
-import { sendChatMessage, setToolEventListener } from './aiService';
+import { sendChatMessage, setToolEventListener, stopCurrentAI } from './aiService';
 import { triggerConversationLeave, memoryManager, globalMemoryManager, runStartupCatchUp, startIdleScheduler } from './memory/index';
 import { exportMemoryToMarkdown, importMemoryFromMarkdown } from './memory/memoryExport';
 import aiConfig from './ai.config';
@@ -245,6 +245,11 @@ function createWindow(): void {
   ipcMain.handle('chat:send', (_e, conversationId: string, content: string) =>
     sendChatMessage(conversationId, content)
   );
+
+  // ── AI 停止回答 ────────────────────────────────────────────
+  ipcMain.handle('chat:stop', () => {
+    stopCurrentAI();
+  });
 
   // ── LLM 设置 ──────────────────────────────────────────────
   ipcMain.handle('settings:get', () => ({

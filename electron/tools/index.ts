@@ -8,9 +8,7 @@
  *
  * 无需修改任何核心循环逻辑！
  *
- * ✨ 添加新 Skill 只需两步：
- *   1. 在 `skills/impl/` 目录下新建文件，实现 `ToolDefinition<T>` 接口，设 isSkill=true
- *   2. 在 `skills/index.ts` 的 skillList 数组中添加
+ * 💡 带 `isSkill: true` 标记的工具支持两阶段交互机制（SkillPauseResult）
  */
 
 import { ToolRegistry } from './registry';
@@ -41,14 +39,29 @@ import searchFilesTool from './impl/searchFiles';
 import executePythonTool from './impl/executePython';
 import executeNodeTool from './impl/executeNode';
 
+// 🆕 终端管理工具
+import startTerminalTool from './impl/startTerminal';
+import getTerminalOutputTool from './impl/getTerminalOutput';
+import sendToTerminalTool from './impl/sendToTerminal';
+import killTerminalTool from './impl/killTerminal';
+
 // 🆕 打工人核心工具（Git 操作）
 import gitStatusTool from './impl/gitStatus';
 import gitDiffTool from './impl/gitDiff';
 import gitCommitTool from './impl/gitCommit';
 import gitLogTool from './impl/gitLog';
 
-import { skillList } from '../skills/index';
-import { setSkillRegistry } from '../skills/skillContext';
+// 🆕 高级工具（原 Skills，带 isSkill 标记和两阶段机制）
+import openTerminalTool from './impl/openTerminal';
+import browserOpenTool from './impl/browserOpen';
+import browserClickTool from './impl/browserClick';
+import browserTypeTool from './impl/browserType';
+import checkPythonEnvTool from './impl/checkPythonEnv';
+import writeFileTool from './impl/writeFile';
+import discordSendFileTool from './impl/discordSendFile';
+import wechatSendFileTool from './impl/wechatSendFile';
+
+import { setToolRegistry } from './toolContext';
 
 const registry = new ToolRegistry()
   .register(datetimeTool)
@@ -75,11 +88,27 @@ const registry = new ToolRegistry()
   .register(executePythonTool)
   .register(executeNodeTool)
   
+  // 🆕 注册终端管理工具
+  .register(startTerminalTool)
+  .register(getTerminalOutputTool)
+  .register(sendToTerminalTool)
+  .register(killTerminalTool)
+  
   // 🆕 注册打工人核心工具（Git 操作）
   .register(gitStatusTool)
   .register(gitDiffTool)
   .register(gitCommitTool)
-  .register(gitLogTool);
+  .register(gitLogTool)
+  
+  // 🆕 注册高级工具（原 Skills，带两阶段交互机制）
+  .register(openTerminalTool)
+  .register(browserOpenTool)
+  .register(browserClickTool)
+  .register(browserTypeTool)
+  .register(checkPythonEnvTool)
+  .register(writeFileTool)
+  .register(discordSendFileTool)
+  .register(wechatSendFileTool);
 
 // 批量注册所有浏览器工具
 for (const tool of browserTools) {
@@ -96,14 +125,9 @@ for (const tool of ocrTools) {
   registry.register(tool);
 }
 
-// 批量注册所有 Skill（高级封装，isSkill=true）
-for (const skill of skillList) {
-  registry.register(skill);
-}
-
-// 初始化 Skill 模块的工具注册表引用（打破 skills/impl/* ↔ tools/index 的循环依赖）
-// 此时 registry 已包含所有原子工具，Skill 的 execute() 可通过 getSkillRegistry() 调用它们
-setSkillRegistry(registry);
+// 初始化工具上下文（打破 tools/impl/* ↔ tools/index 的循环依赖）
+// 此时 registry 已包含所有工具，impl 文件的 execute() 可通过 getToolRegistry() 调用其他工具
+setToolRegistry(registry);
 
 export const toolRegistry = registry;
 

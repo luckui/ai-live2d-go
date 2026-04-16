@@ -5,7 +5,7 @@
 
 import { resolveToolset } from './toolsets';
 
-const modes = ['chat', 'agent', 'agent-debug'];
+const modes = ['chat', 'agent', 'agent-debug', 'developer'];
 
 console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 console.log('📊 工具分层方案验证\n');

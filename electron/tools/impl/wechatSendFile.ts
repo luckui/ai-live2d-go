@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Skill: wechat_send_file
  *
  * 搜索本地文件并通过微信 Bot 发送到用户。
@@ -28,7 +28,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { desktopCapturer, nativeImage } from 'electron';
-import type { ToolDefinition, SkillPauseResult } from '../../tools/types';
+import type { ToolDefinition, SkillPauseResult } from '../types';
 import { WeChatAdapter } from '../../bridges/adapters/wechat';
 
 interface WeChatSendFileParams {

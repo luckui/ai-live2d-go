@@ -171,6 +171,85 @@ function addTypingIndicator(): HTMLElement | null {
 }
 
 // =====================================================
+// Todo 清单管理
+// =====================================================
+
+interface TodoItem {
+  id: string;
+  content: string;
+  status: 'pending' | 'in_progress' | 'completed' | 'cancelled';
+}
+
+let currentTodoList: TodoItem[] = [];
+let isTodoCollapsed = false;
+
+/** 从 todo 工具的文本结果中解析任务列表（读取模式时使用） */
+function parseTodoFromResult(resultText: string): TodoItem[] {
+  const items: TodoItem[] = [];
+  const lines = resultText.split('\n');
+  for (const line of lines) {
+    // 匹配格式：[>] id. content 或 [x] id. content 等
+    const m = line.match(/\[([ x>~?])\]\s+(\S+)\.\s+(.+)/);
+    if (!m) continue;
+    const marker = m[1];
+    const id = m[2];
+    const content = m[3].trim();
+    let status: TodoItem['status'] = 'pending';
+    if (marker === '>') status = 'in_progress';
+    else if (marker === 'x') status = 'completed';
+    else if (marker === '~') status = 'cancelled';
+    items.push({ id, content, status });
+  }
+  return items;
+}
+
+function updateTodoPanel(todoList: TodoItem[]): void {
+  currentTodoList = todoList;
+  const panel = document.getElementById('todo-panel');
+  const listDiv = document.getElementById('todo-list');
+  if (!panel || !listDiv) return;
+
+  // 如果任务列表为空，隐藏面板
+  if (todoList.length === 0) {
+    panel.style.display = 'none';
+    return;
+  }
+
+  // 显示面板并渲染任务列表
+  panel.style.display = 'block';
+  listDiv.innerHTML = '';
+
+  for (const item of todoList) {
+    const itemDiv = document.createElement('div');
+    // CSS class 用连字符（in-progress），数据用下划线（in_progress）
+    const statusClass = item.status.replace(/_/g, '-');
+    itemDiv.className = `todo-item ${statusClass}`;
+    
+    let icon = '⭕';
+    if (item.status === 'completed') icon = '✅';
+    else if (item.status === 'in_progress') icon = '🔄';
+    else if (item.status === 'cancelled') icon = '❌';
+    
+    itemDiv.innerHTML = `
+      <span class="todo-icon">${icon}</span>
+      <span class="todo-text">${escapeHtml(item.content)}</span>
+    `;
+    
+    listDiv.appendChild(itemDiv);
+  }
+
+  // 自动关闭：所有任务都完成或取消时，3秒后自动关闭
+  const allDone = todoList.every(item => item.status === 'completed' || item.status === 'cancelled');
+  if (allDone) {
+    setTimeout(() => {
+      if (panel.style.display !== 'none') {
+        panel.style.display = 'none';
+      }
+    }, 3000);
+  }
+}
+
+// =====================================================
 // 工具调用调试气泡
 // =====================================================
 
@@ -228,18 +307,50 @@ function addToolCallBubble(ev: {
 // =====================================================
 // 发送消息
 // =====================================================
+// 发送消息
+// =====================================================
+
+let isStopMode = false; // 是否处于可停止状态
 
 async function sendMessage(): Promise<void> {
-  if (isSending || !currentConversationId) return;
+  if (!currentConversationId) return;
+  
+  const sendBtn = document.getElementById('send-btn') as HTMLButtonElement;
+  
+  // 如果已经在发送中，点击表示停止
+  if (isSending) {
+    console.log('[Chat] 用户请求停止AI回答');
+    await (window as any).chatAPI?.stopAI?.();
+    // 恢复按钮状态
+    isSending = false;
+    isStopMode = false;
+    if (sendBtn) {
+      sendBtn.disabled = false;
+      sendBtn.classList.remove('stop-mode');
+      sendBtn.innerHTML = `
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
+        </svg>`;
+    }
+    return;
+  }
 
   const input = document.getElementById('message-input') as HTMLInputElement;
-  const sendBtn = document.getElementById('send-btn') as HTMLButtonElement;
   const text = input?.value.trim();
   if (!text) return;
 
   input.value = '';
   isSending = true;
-  if (sendBtn) sendBtn.disabled = true;
+  isStopMode = true;
+  
+  // 切换为停止按钮
+  if (sendBtn) {
+    sendBtn.classList.add('stop-mode');
+    sendBtn.innerHTML = `
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+        <rect x="6" y="6" width="12" height="12" rx="2"/>
+      </svg>`;
+  }
 
   addMessage('user', text);
   const typing = addTypingIndicator();
@@ -255,14 +366,29 @@ async function sendMessage(): Promise<void> {
     await refreshConvTitle(currentConversationId);
   } catch (e) {
     typing?.remove();
-    addMessage('ai', `（出错了：${(e as Error).message}）`);
+    const errMsg = (e as Error).message;
+    if (errMsg.includes('aborted') || errMsg.includes('stopped')) {
+      addMessage('ai', '（已停止回答）');
+    } else {
+      addMessage('ai', `（出错了：${errMsg}）`);
+    }
   } finally {
     isSending = false;
-    if (sendBtn) sendBtn.disabled = false;
+    isStopMode = false;
+    if (sendBtn) {
+      sendBtn.disabled = false;
+      sendBtn.classList.remove('stop-mode');
+      sendBtn.innerHTML = `
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
+        </svg>`;
+    }
     input?.focus();
   }
 }
 
+// =====================================================
+// 对话管理
 // =====================================================
 // 对话管理
 // =====================================================
@@ -407,7 +533,7 @@ function updateChatLayout(isExpanded: boolean): void {
   }
 
   const headerH = document.getElementById('chat-header')?.offsetHeight ?? 50;
-  const bodyH = isExpanded ? 220 : 0;
+  const bodyH = isExpanded ? 320 : 0;
   window.electronAPI?.resizeWindow(360 + headerH + bodyH);
 }
 
@@ -488,12 +614,14 @@ export async function initChat(): Promise<void> {
   
   // 更新 UI 的通用函数
   function updateAgentModeUI(mode: string) {
-    const isAgent = mode === 'agent' || mode === 'agent-debug';
+    const isAgent = mode === 'agent' || mode === 'agent-debug' || mode === 'developer';
     isAgentMode = isAgent;
     
     if (agentModeText) {
       if (mode === 'agent-debug') {
         agentModeText.textContent = 'Debug';
+      } else if (mode === 'developer') {
+        agentModeText.textContent = 'Dev';
       } else {
         agentModeText.textContent = isAgent ? 'Agent' : 'Chat';
       }
@@ -514,7 +642,17 @@ export async function initChat(): Promise<void> {
   // 用户点击按钮切换
   agentModeBtn?.addEventListener('click', async (e) => {
     e.stopPropagation();
-    const newMode = isAgentMode ? 'chat' : 'agent';
+    // 循环切换：chat -> agent -> agent-debug -> developer -> chat
+    let newMode = 'agent';
+    if (agentModeText?.textContent === 'Chat') {
+      newMode = 'agent';
+    } else if (agentModeText?.textContent === 'Agent') {
+      newMode = 'agent-debug';
+    } else if (agentModeText?.textContent === 'Debug') {
+      newMode = 'developer';
+    } else if (agentModeText?.textContent === 'Dev') {
+      newMode = 'chat';
+    }
     
     // 发送 IPC 切换模式
     await (window as any).agentAPI?.setMode(newMode);
@@ -584,7 +722,52 @@ export async function initChat(): Promise<void> {
   });
 
   // ── 工具调用调试气泡：实时展示 AI 正在调用哪些工具 ──────────
-  window.debugAPI?.onToolCall((ev) => addToolCallBubble(ev));
+  window.debugAPI?.onToolCall((ev) => {
+    // 如果是 todo 工具，只更新 Todo 面板，不显示气泡
+    if (ev.name === 'todo') {
+      try {
+        const todoList = ev.args.todos as TodoItem[] | undefined;
+        if (Array.isArray(todoList) && todoList.length > 0) {
+          updateTodoPanel(todoList);
+        }
+        // 读取模式（无 todos 参数）：从 result 文本解析任务列表
+        if (!todoList && ev.result && ev.result.includes('[')) {
+          const parsed = parseTodoFromResult(ev.result);
+          if (parsed.length > 0) updateTodoPanel(parsed);
+        }
+      } catch (e) {
+        console.error('[Todo] 解析失败:', e);
+      }
+      return; // 提前返回，不显示气泡
+    }
+    
+    // 其他工具才显示工具调用气泡
+    addToolCallBubble(ev);
+  });
+
+  // Todo 面板关闭按钮
+  document.getElementById('todo-close-btn')?.addEventListener('click', () => {
+    const panel = document.getElementById('todo-panel');
+    if (panel) panel.style.display = 'none';
+  });
+
+  // Todo 面板折叠/展开按钮
+  document.getElementById('todo-toggle-btn')?.addEventListener('click', () => {
+    const listDiv = document.getElementById('todo-list');
+    const toggleBtn = document.getElementById('todo-toggle-btn');
+    if (!listDiv || !toggleBtn) return;
+
+    isTodoCollapsed = !isTodoCollapsed;
+    if (isTodoCollapsed) {
+      listDiv.classList.add('todo-list-collapsed');
+      listDiv.classList.remove('todo-list-expanded');
+      toggleBtn.classList.add('collapsed');
+    } else {
+      listDiv.classList.remove('todo-list-collapsed');
+      listDiv.classList.add('todo-list-expanded');
+      toggleBtn.classList.remove('collapsed');
+    }
+  });
 }
 
 

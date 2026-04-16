@@ -227,7 +227,7 @@ html, body {
 
 .chat-title {
   font-size: 15px;
-  font-weight: 700;
+  font-weight: 620;
   color: white;
   text-shadow: 0 1px 3px rgba(0,0,0,0.2);
   letter-spacing: 0.5px;
@@ -288,7 +288,7 @@ html, body {
 
 .agent-mode-btn.active {
   background: rgba(255, 220, 100, 0.45);
-  color: #FFD700;
+  color: #FFD620;
   text-shadow: 0 0 8px rgba(255, 215, 0, 0.5);
 }
 
@@ -302,7 +302,7 @@ html, body {
   display: flex;
   flex-direction: column;
   position: relative;
-  height: 220px;
+  height: 280px;
   overflow: hidden;
   transition: height 0.35s cubic-bezier(0.4, 0, 0.2, 1),
               opacity 0.3s ease;
@@ -752,6 +752,180 @@ html, body {
   transform: scale(0.9);
 }
 
+/* 发送按钮停止状态 */
+#send-btn.stop-mode {
+  background: linear-gradient(135deg, #ff6b6b 0%, #ee5a5a 100%);
+  box-shadow: 0 3px 10px rgba(255, 107, 107, 0.4);
+}
+
+#send-btn.stop-mode:hover {
+  box-shadow: 0 4px 14px rgba(255, 107, 107, 0.55);
+}
+
+/* ===== Todo 任务清单面板 ===== */
+#todo-panel {
+  margin: 8px 12px 0;
+  background: linear-gradient(135deg, rgba(255, 248, 250, 0.98) 0%, rgba(255, 240, 248, 0.95) 100%);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-radius: var(--radius-md);
+  box-shadow: 0 2px 12px rgba(200, 80, 120, 0.15);
+  border: 1px solid rgba(245, 87, 108, 0.2);
+  overflow: hidden;
+  animation: slideDown 0.3s ease;
+}
+
+@keyframes slideDown {
+  from { opacity: 0; transform: translateY(-10px); max-height: 0; }
+  to { opacity: 1; transform: translateY(0); max-height: 300px; }
+}
+
+.todo-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  background: linear-gradient(135deg, rgba(240, 147, 251, 0.15) 0%, rgba(245, 87, 108, 0.12) 100%);
+  border-bottom: 1px solid rgba(245, 87, 108, 0.15);
+}
+
+.todo-title {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--pink-deep);
+  letter-spacing: 0.3px;
+}
+
+.todo-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.todo-toggle {
+  background: none;
+  border: none;
+  color: var(--pink-deep);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+  transition: background 0.15s;
+  -webkit-app-region: no-drag;
+  line-height: 1;
+}
+
+.todo-toggle:hover {
+  background: rgba(245, 87, 108, 0.15);
+}
+
+.todo-toggle.collapsed {
+  transform: rotate(-90deg);
+}
+
+.todo-close {
+  background: none;
+  border: none;
+  color: var(--pink-deep);
+  font-size: 13px;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+  transition: background 0.15s;
+  -webkit-app-region: no-drag;
+}
+
+.todo-close:hover {
+  background: rgba(245, 87, 108, 0.2);
+}
+
+#todo-list {
+  max-height: 200px;
+  overflow-y: auto;
+  padding: 6px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  transition: max-height 0.25s ease, opacity 0.2s ease, padding 0.2s ease;
+}
+
+#todo-list.todo-list-collapsed {
+  max-height: 0;
+  opacity: 0;
+  padding: 0 8px;
+  overflow: hidden;
+}
+
+.todo-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 5px 7px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid rgba(200, 220, 255, 0.3);
+  font-size: 11px;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.todo-item:hover {
+  background: rgba(255, 255, 255, 0.95);
+  border-color: rgba(200, 220, 255, 0.5);
+}
+
+.todo-icon {
+  flex-shrink: 0;
+  font-size: 12px;
+  margin-top: 1px;
+}
+
+.todo-text {
+  flex: 1;
+  color: #556;
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+.todo-item.completed {
+  opacity: 0.6;
+  background: rgba(220, 255, 230, 0.6);
+  border-color: rgba(100, 200, 130, 0.3);
+}
+
+.todo-item.completed .todo-text {
+  text-decoration: line-through;
+  color: #6a9;
+}
+
+.todo-item.in-progress {
+  background: rgba(255, 245, 220, 0.75);
+  border-color: rgba(255, 180, 100, 0.4);
+  box-shadow: 0 0 8px rgba(255, 180, 100, 0.2);
+}
+
+.todo-item.in-progress .todo-icon {
+  animation: pulse 1.5s infinite;
+}
+
+.todo-item.cancelled {
+  opacity: 0.5;
+  background: rgba(255, 220, 220, 0.6);
+  border-color: rgba(200, 100, 100, 0.3);
+}
+
+.todo-item.cancelled .todo-text {
+  text-decoration: line-through;
+  color: #c66;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
 /* ========================================================
    窗口拖动区域
 ======================================================== */
@@ -823,7 +997,7 @@ html, body {
 
 .settings-ttl {
   font-size: 15px;
-  font-weight: 700;
+  font-weight: 620;
   color: white;
   text-shadow: 0 1px 3px rgba(0,0,0,0.2);
   letter-spacing: 0.3px;
@@ -929,7 +1103,7 @@ html, body {
   content: ' ✓';
   font-size: 10px;
   color: #3cb371;
-  font-weight: 700;
+  font-weight: 620;
 }
 
 /* ── 表单 label ── */
@@ -1065,7 +1239,7 @@ html, body {
   background: var(--gradient-header);
   color: white;
   font-size: 14px;
-  font-weight: 700;
+  font-weight: 620;
   font-family: var(--font);
   cursor: pointer;
   transition: opacity 0.2s, background 0.3s;

@@ -36,11 +36,13 @@ export interface ChatCompletionResponse {
  * @param provider - LLM Provider 配置（含 baseUrl / apiKey / model 等）
  * @param messages - 消息列表
  * @param tools    - 传入工具 schema 数组时启用 function calling；不传则禁用
+ * @param signal   - 可选的 AbortSignal，用于中断请求
  */
 export async function fetchCompletion(
   provider: LLMProviderConfig,
   messages: ChatMessage[],
   tools?: ToolSchema[],
+  signal?: AbortSignal,
 ): Promise<ChatCompletionResponse> {
   const withTools = tools && tools.length > 0;
 
@@ -59,6 +61,7 @@ export async function fetchCompletion(
       // 推理参数 + 服务商扩展字段（统一由 buildProviderExtraBody 处理）
       ...buildProviderExtraBody(provider),
     }),
+    signal, // 🆕 传递中断信号
   });
 
   if (!response.ok) {

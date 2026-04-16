@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Skill: discord_send_file
  *
  * 搜索本地文件并通过 Discord Bot 发送到用户所在频道。
@@ -28,7 +28,7 @@ import * as path from 'path';
 import * as os from 'os';
 import { desktopCapturer, nativeImage } from 'electron';
 import { AttachmentBuilder, TextChannel } from 'discord.js';
-import type { ToolDefinition, SkillPauseResult } from '../../tools/types';
+import type { ToolDefinition, SkillPauseResult } from '../types';
 import { DiscordAdapter } from '../../bridges/adapters/discord';
 
 interface DiscordSendFileParams {

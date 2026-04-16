@@ -339,6 +339,39 @@ export async function readPageSummary(mode: 'brief' | 'full' = 'brief'): Promise
     if (interactives) out += `\n\n【可交互元素（含操作提示）】\n${interactives}`;
   }
 
+  // ── 控制台错误和页面异常 ──────────────────────────────────────
+  const consoleErrors = browserSession.getRecentConsoleErrors(10);
+  const pageErrors = browserSession.getRecentPageErrors(10);
+  
+  if (consoleErrors.length > 0 || pageErrors.length > 0) {
+    out += '\n\n❌ 【浏览器控制台错误】';
+    
+    if (pageErrors.length > 0) {
+      out += '\n\n页面异常（未捕获的错误）:';
+      pageErrors.forEach((err, i) => {
+        out += `\n  ${i + 1}. ${err.message}`;
+      });
+    }
+    
+    if (consoleErrors.length > 0) {
+      out += '\n\n控制台消息:';
+      consoleErrors.forEach((err, i) => {
+        out += `\n  ${i + 1}. [${err.type}] ${err.text}`;
+      });
+    }
+    
+    out += '\n\n⚠️ 检测到浏览器错误！常见原因：';
+    out += '\n  • ES Module 导入错误（named export 不存在）';
+    out += '\n  • 依赖包版本不匹配或打包配置错误';
+    out += '\n  • CORS 跨域问题（file:// 无法加载本地资源）';
+    out += '\n  • 第三方库 CDN 链接失效或版本错误';
+    out += '\n\n建议操作：';
+    out += '\n  1. 检查 import 语句是否正确（包名、导出名）';
+    out += '\n  2. 清理依赖缓存：删除 node_modules/.vite 和 dist';
+    out += '\n  3. 验证 package.json 中的依赖版本';
+    out += '\n  4. 如果是 CORS，需要用 start_terminal 启动开发服务器';
+  }
+
   return out;
 }
 
@@ -406,6 +439,7 @@ const browserOpen: ToolDefinition<OpenParams> = {
           : `https://www.google.com/search?q=${encodeURIComponent(q)}`; // 浏览器未打开时，普通关键词按全网搜索处理
 
     const page = await browserSession.ensurePage();
+    browserSession.clearErrors(); // 清除旧页面的错误记录
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
     return `✅ 已打开 ${await pageInfo()}`;
   },

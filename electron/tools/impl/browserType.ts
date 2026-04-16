@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Skill: browser_type_smart
  *
  * 两阶段输入 Skill — AI 先看到候选列表，再确认目标，最后执行输入。
@@ -30,8 +30,8 @@
  *   - 页面没有可见输入框 → SkillPauseResult
  */
 
-import type { ToolDefinition, ToolExecuteResult, SkillPauseResult, SkillContinueResult } from '../../tools/types';
-import { browserSession } from '../../tools/impl/browserSession';
+import type { ToolDefinition, ToolExecuteResult, SkillPauseResult, SkillContinueResult } from '../types';
+import { browserSession } from '../impl/browserSession';
 
 interface BrowserTypeSmartParams {
   /** 目标输入框的描述；支持多个同义词（逗号分隔），如"用户名,username,账号"、"密码,password,pass" */

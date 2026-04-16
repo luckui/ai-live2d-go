@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Skill: write_file
  *
  * 用 Node.js fs 模块写入文件，比 run_command 拼 echo/cat 更安全、更可靠。
@@ -24,7 +24,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import type { ToolDefinition, ToolExecuteResult, SkillPauseResult } from '../../tools/types';
+import type { ToolDefinition, ToolExecuteResult, SkillPauseResult } from '../types';
 
 interface WriteFileParams {
   /** 目标文件路径（绝对路径或相对路径） */

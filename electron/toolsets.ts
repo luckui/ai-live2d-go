@@ -270,6 +270,12 @@ export const TOOLSETS: Record<string, ToolsetDefinition> = {
       "execute_python",          // 执行 Python 代码
       "execute_node",            // 执行 Node.js/TypeScript 代码
       
+      // 🆕 终端管理工具
+      "start_terminal",          // 启动持久化终端会话
+      "get_terminal_output",     // 获取终端输出
+      "send_to_terminal",        // 发送终端输入
+      "kill_terminal",           // 终止终端会话
+      
       // 🆕 打工人核心工具（Git 操作）
       "git_status",              // Git 状态
       "git_diff",                // Git 差异
@@ -306,6 +312,18 @@ export const TOOLSETS: Record<string, ToolsetDefinition> = {
       "get_current_datetime",
       "take_screenshot",
     ],
+  },
+
+  // ═════════════════════════════════════════════════════════════
+  // Developer 模式（nightly）：软件工程师，方法论驱动开发
+  // ═════════════════════════════════════════════════════════════
+
+  "developer": {
+    description: "Developer 模式 - 软件工程师（继承 agent-debug 全部工具 + 方法论驱动提示词）",
+    tools: [
+      // developer 自身不需要额外工具，全部通过 includes 继承
+    ],
+    includes: ["agent-debug"],  // ← 继承 agent-debug 的全部工具
   },
 };
 

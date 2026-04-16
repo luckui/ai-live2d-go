@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Skill: browser_click_smart
  *
  * 两阶段点击 Skill — AI 先看到候选列表再确认点击，避免盲猜。
@@ -21,9 +21,9 @@
  *   匹配字段：innerText / aria-label / title / id / className（无文字时回退 class）
  */
 
-import type { ToolDefinition, ToolExecuteResult, SkillPauseResult, SkillContinueResult } from '../../tools/types';
-import { browserSession } from '../../tools/impl/browserSession';
-import { readPageSummary } from '../../tools/impl/browser';
+import type { ToolDefinition, ToolExecuteResult, SkillPauseResult, SkillContinueResult } from '../types';
+import { browserSession } from '../impl/browserSession';
+import { readPageSummary } from '../impl/browser';
 
 interface BrowserClickSmartParams {
   /** 按钮/链接描述；支持多同义词（逗号/斜杠/分号分隔），如"搜索,search,查找" */

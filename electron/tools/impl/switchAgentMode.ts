@@ -18,8 +18,8 @@ import { setAgentMode, getAgentMode } from '../../agentMode';
 import { BrowserWindow } from 'electron';
 
 interface SwitchAgentModeParams {
-  /** 目标模式：chat | agent | agent-debug */
-  target_mode: 'chat' | 'agent' | 'agent-debug';
+  /** 目标模式：chat | agent | agent-debug | developer */
+  target_mode: 'chat' | 'agent' | 'agent-debug' | 'developer';
   /** 切换原因（向用户说明） */
   reason: string;
 }
@@ -30,13 +30,15 @@ const switchAgentMode: ToolDefinition<SwitchAgentModeParams> = {
     function: {
       name: 'switch_agent_mode',
       description:
-        'AI 主动切换 Agent 模式（Chat/Agent/Agent-Debug）。\n' +
+        'AI 主动切换 Agent 模式（Chat/Agent/Agent-Debug/Developer）。\n' +
         '【使用场景】\n' +
         '  • Chat → Agent: 检测到需要自动化能力（如网页点击、文件编辑）\n' +
         '  • Agent → Chat: 完成复杂任务后降级节省资源\n' +
         '  • 任何 → Agent-Debug: 调试时暴露底层工具\n' +
+        '  • 任何 → Developer: 软件工程模式（方法论驱动，强制 TDD/Plan/Debug 流程）\n' +
         '【注意事项】\n' +
         '  • 切换后立即生效，无需用户确认\n' +
+        '  • Developer 模式会切换系统提示词为软件工程师人设\n' +
         '  • 升级前应向用户说明原因（通过 reason 参数）\n' +
         '  • 不要频繁切换（影响用户体验）',
       parameters: {
@@ -44,8 +46,8 @@ const switchAgentMode: ToolDefinition<SwitchAgentModeParams> = {
         properties: {
           target_mode: {
             type: 'string',
-            enum: ['chat', 'agent', 'agent-debug'],
-            description: '目标模式：chat（轻量）| agent（全功能）| agent-debug（调试）',
+            enum: ['chat', 'agent', 'agent-debug', 'developer'],
+            description: '目标模式：chat（轻量）| agent（全功能）| agent-debug（调试）| developer（软件工程师）',
           },
           reason: {
             type: 'string',
@@ -77,10 +79,11 @@ const switchAgentMode: ToolDefinition<SwitchAgentModeParams> = {
     }
 
     // 返回成功消息（AI 会向用户说明）
-    const modeNames = {
+    const modeNames: Record<string, string> = {
       chat: 'Chat 模式（轻量对话）',
       agent: 'Agent 模式（全功能自动化）',
       'agent-debug': 'Agent-Debug 模式（开发者调试）',
+      developer: 'Developer 模式（软件工程师 — 方法论驱动）',
     };
 
     return (

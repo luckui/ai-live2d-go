@@ -143,29 +143,34 @@ function renderForm(): void {
   delBtn.style.visibility = Object.keys(cfg.providers).length <= 1 ? 'hidden' : 'visible';
 }
 
-// ── Provider Pills ─────────────────────────────────────
+// ── Provider Select ─────────────────────────────────────
 
-function renderPills(): void {
+function renderProviderSelect(): void {
   if (!cfg) return;
-  const container = document.getElementById('s-provider-pills');
-  if (!container) return;
-  container.innerHTML = '';
+  const select = document.getElementById('s-provider-select') as HTMLSelectElement;
+  if (!select) return;
+  select.innerHTML = '';
 
   for (const [key, prov] of Object.entries(cfg.providers)) {
-    const pill = document.createElement('button');
-    pill.className = 's-pill';
-    if (key === editKey) pill.classList.add('s-pill-selected');
-    if (key === cfg.activeProvider) pill.classList.add('s-pill-active');
-    pill.textContent = prov.name || key;
-    pill.title = key === cfg.activeProvider ? '当前使用中' : '点击编辑';
-    pill.addEventListener('click', () => {
-      syncFormToCfg();
-      editKey = key;
-      renderPills();
-      renderForm();
-    });
-    container.appendChild(pill);
+    const option = document.createElement('option');
+    option.value = key;
+    option.textContent = prov.name || key;
+    if (key === cfg.activeProvider) {
+      option.textContent += ' (当前使用)';
+    }
+    if (key === editKey) {
+      option.selected = true;
+    }
+    select.appendChild(option);
   }
+
+  // 监听下拉框变化
+  select.onchange = () => {
+    syncFormToCfg();
+    editKey = select.value;
+    renderProviderSelect();
+    renderForm();
+  };
 }
 
 // ── 加载设置到 UI ──────────────────────────────────────
@@ -175,7 +180,7 @@ async function loadSettingsUI(): Promise<void> {
   editKey = cfg.activeProvider;
   (document.getElementById('s-rounds') as HTMLInputElement).value =
     String(cfg.contextWindowRounds);
-  renderPills();
+  renderProviderSelect();
   renderForm();
 }
 
@@ -512,7 +517,7 @@ async function saveSettings(): Promise<void> {
     btn.classList.remove('saved');
   }, 1800);
 
-  renderPills(); // 刷新 active 标记
+  renderProviderSelect(); // 刷新 active 标记
 }
 
 // ── 新增 Provider ──────────────────────────────────────
@@ -532,7 +537,7 @@ function addProvider(): void {
     systemPrompt: '',
   };
   editKey = key;
-  renderPills();
+  renderProviderSelect();
   renderForm();
   // 滚动到表单
   document.getElementById('s-form-section')?.scrollIntoView({ behavior: 'smooth' });
@@ -550,7 +555,7 @@ function deleteProvider(): void {
   cfg.deletedProviders = [...(cfg.deletedProviders ?? []), editKey];
   delete cfg.providers[editKey];
   editKey = cfg.activeProvider;
-  renderPills();
+  renderProviderSelect();
   renderForm();
   // 立即持久化，不依赖用户手动点保存
   void saveSettings();
@@ -562,7 +567,7 @@ function setActiveProvider(): void {
   if (!cfg || !editKey) return;
   syncFormToCfg();
   cfg.activeProvider = editKey;
-  renderPills();
+  renderProviderSelect();
   renderForm();
 }
 
