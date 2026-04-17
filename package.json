@@ -19,7 +19,7 @@
     },
     "extraResources": [
       {
-        "from": ".env",
+        "from": ".env.release",
         "to": ".env.defaults"
       },
       {

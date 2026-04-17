@@ -111,7 +111,10 @@ import * as ttsServerManager from './ttsServerManager';
  * 这样每次更新提示词后重启即可生效，不需要用户手动清空数据库。
  */
 const USER_EDITABLE_FIELDS = ['apiKey', 'baseUrl', 'model', 'temperature', 'maxTokens', 'name'] as const;
-
+/** 内置 LLM 方案 key，禁止删除，始终从代码默认值恢复 */
+const BUILTIN_LLM_PROVIDERS = new Set(Object.keys(aiConfig.providers));
+/** 内置 TTS 方案 key，禁止删除，始终从代码默认值恢复 */
+const BUILTIN_TTS_PROVIDERS = new Set(Object.keys(defaultTTSConfig.providers));
 // ── TTS 多 Provider 内存配置 ──────────────────────────────────────
 let ttsConfig: TTSConfig = JSON.parse(JSON.stringify(defaultTTSConfig));
 
@@ -153,7 +156,9 @@ export function updateTTSConfig(newCfg: Partial<TTSConfig>): void {
   if (newCfg.enabled !== undefined) ttsConfig.enabled = newCfg.enabled;
   if (newCfg.activeProvider !== undefined) ttsConfig.activeProvider = newCfg.activeProvider;
   if (newCfg.providers !== undefined) ttsConfig.providers = newCfg.providers;
-  if (newCfg.deletedProviders !== undefined) ttsConfig.deletedProviders = newCfg.deletedProviders;
+  if (newCfg.deletedProviders !== undefined) {
+    ttsConfig.deletedProviders = newCfg.deletedProviders.filter(k => !BUILTIN_TTS_PROVIDERS.has(k));
+  }
   activateTTSProvider();
   setSetting('tts_config', JSON.stringify(ttsConfig));
   broadcastTTSChanged();
@@ -167,8 +172,8 @@ function loadPersistedConfig(): void {
     if (saved.activeProvider) aiConfig.activeProvider = saved.activeProvider;
     if (saved.contextWindowRounds) aiConfig.contextWindowRounds = saved.contextWindowRounds;
 
-    // 记录用户曾主动删除的 provider key
-    const deletedProviders: string[] = saved.deletedProviders ?? [];
+    // 记录用户曾主动删除的 provider key（排除内置方案）
+    const deletedProviders: string[] = (saved.deletedProviders ?? []).filter((k: string) => !BUILTIN_LLM_PROVIDERS.has(k));
     aiConfig.deletedProviders = deletedProviders;
 
     if (saved.providers && Object.keys(saved.providers).length > 0) {
@@ -203,15 +208,37 @@ function loadPersistedConfig(): void {
         // 新格式：多 Provider
         ttsConfig.enabled = saved.enabled ?? false;
         ttsConfig.activeProvider = saved.activeProvider;
-        ttsConfig.providers = saved.providers;
-        ttsConfig.deletedProviders = saved.deletedProviders ?? [];
+        ttsConfig.providers = {}; // 先清空，重新构建
+        // 清洗 deletedProviders：内置方案不允许残留在删除列表中
+        ttsConfig.deletedProviders = (saved.deletedProviders ?? []).filter((k: string) => !BUILTIN_TTS_PROVIDERS.has(k));
 
-        // 将代码中新增的默认 provider 合并进来（用户删除过的除外）
-        const deleted = new Set(ttsConfig.deletedProviders);
+        // 内置方案：强制从代码默认值恢复，仅保留用户的 speaker / language
         for (const [key, codeProv] of Object.entries(defaultTTSConfig.providers)) {
-          if (!(key in ttsConfig.providers) && !deleted.has(key)) {
+          const dbProv = saved.providers[key];
+          if (dbProv) {
+            // DB 中有此内置方案：仅保留用户可编辑字段
+            ttsConfig.providers[key] = {
+              ...codeProv,
+              speaker: dbProv.speaker ?? codeProv.speaker,
+              language: dbProv.language ?? codeProv.language,
+            };
+          } else {
+            // DB 中缺失（被删除过）：整个补回
             ttsConfig.providers[key] = codeProv;
           }
+        }
+
+        // 将 DB 里用户自行新增的 provider 保留（非内置且未删除）
+        const deleted = new Set(ttsConfig.deletedProviders);
+        for (const [key, dbProv] of Object.entries(saved.providers)) {
+          if (!BUILTIN_TTS_PROVIDERS.has(key) && !deleted.has(key)) {
+            ttsConfig.providers[key] = dbProv as TTSProviderConfig;
+          }
+        }
+
+        // 若 activeProvider 指向已不存在的 key，回退到默认
+        if (!(ttsConfig.activeProvider in ttsConfig.providers)) {
+          ttsConfig.activeProvider = defaultTTSConfig.activeProvider;
         }
       } else if (saved.url !== undefined) {
         // 旧格式迁移：{ enabled, url, apiKey, speaker, language }
@@ -358,12 +385,13 @@ function createWindow(): void {
     aiConfig.activeProvider = newCfg.activeProvider;
     aiConfig.contextWindowRounds = newCfg.contextWindowRounds;
     aiConfig.providers = newCfg.providers; // 完全替换
-    aiConfig.deletedProviders = newCfg.deletedProviders ?? [];
+    // 内置方案不允许出现在删除列表中
+    aiConfig.deletedProviders = (newCfg.deletedProviders ?? []).filter(k => !BUILTIN_LLM_PROVIDERS.has(k));
     setSetting('llm_config', JSON.stringify({
       activeProvider: newCfg.activeProvider,
       contextWindowRounds: newCfg.contextWindowRounds,
       providers: newCfg.providers,
-      deletedProviders: newCfg.deletedProviders ?? [],
+      deletedProviders: aiConfig.deletedProviders,
     }));
   });
 
@@ -582,7 +610,22 @@ function createWindow(): void {
     ttsConfig.enabled = newCfg.enabled;
     ttsConfig.activeProvider = newCfg.activeProvider;
     ttsConfig.providers = newCfg.providers;
-    ttsConfig.deletedProviders = newCfg.deletedProviders ?? [];
+    // 内置方案不允许出现在删除列表中
+    ttsConfig.deletedProviders = (newCfg.deletedProviders ?? []).filter(k => !BUILTIN_TTS_PROVIDERS.has(k));
+
+    // 内置方案关键字段强制用代码版本（用户只能改 speaker/language）
+    for (const [key, codeProv] of Object.entries(defaultTTSConfig.providers)) {
+      if (key in ttsConfig.providers) {
+        const uiProv = ttsConfig.providers[key];
+        ttsConfig.providers[key] = {
+          ...codeProv,
+          speaker: uiProv.speaker ?? codeProv.speaker,
+          language: uiProv.language ?? codeProv.language,
+        };
+      } else {
+        ttsConfig.providers[key] = codeProv;
+      }
+    }
 
     activateTTSProvider();
     setSetting('tts_config', JSON.stringify(ttsConfig));

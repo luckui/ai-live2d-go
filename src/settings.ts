@@ -548,6 +548,12 @@ function renderTTSForm(): void {
   (document.getElementById('tts-apikey')   as HTMLInputElement).value  = p.apiKey   ?? '';
   (document.getElementById('tts-language') as HTMLSelectElement).value = p.language  ?? 'Auto';
 
+  // 内置方案：name / url / apiKey 只读（由代码控制）
+  const isBuiltin = BUILTIN_TTS_PROVIDERS.includes(ttsEditKey);
+  (document.getElementById('tts-name')   as HTMLInputElement).readOnly = isBuiltin;
+  (document.getElementById('tts-url')    as HTMLInputElement).readOnly = isBuiltin;
+  (document.getElementById('tts-apikey') as HTMLInputElement).readOnly = isBuiltin;
+
   // ── 音色区域：preset 模式显示下拉，text 模式显示文本框 ──
   const speakerInput  = document.getElementById('tts-speaker')        as HTMLInputElement;
   const speakerSelect = document.getElementById('tts-speaker-select') as HTMLSelectElement;
@@ -573,7 +579,6 @@ function renderTTSForm(): void {
 
   // 内置方案或只有一个 provider 时隐藏删除按钮
   const delBtn = document.getElementById('tts-del-btn') as HTMLButtonElement;
-  const isBuiltin = BUILTIN_TTS_PROVIDERS.includes(ttsEditKey);
   const onlyOne = Object.keys(ttsCfg.providers).length <= 1;
   delBtn.style.visibility = (isBuiltin || onlyOne) ? 'hidden' : 'visible';
 

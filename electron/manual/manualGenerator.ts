@@ -64,6 +64,26 @@ class ManualGenerator {
   }
 
   /**
+   * 同步执行创建或编辑（阻塞直到生成完成，返回生成结果）
+   * 用于用户主动要求总结说明书的场景
+   */
+  async syncExecute(task: GenerationTask): Promise<{ success: boolean; content?: string; error?: string }> {
+    console.log(`[ManualGenerator] Sync ${task.type}: ${task.name}`);
+    try {
+      await this.executeTask(task);
+      // 读回保存的文件内容返回给调用方
+      const filename = `${task.name}.md`;
+      const filepath = path.join(MANUAL_DIR, filename);
+      const { readFile } = await import('fs/promises');
+      const content = await readFile(filepath, 'utf-8');
+      return { success: true, content };
+    } catch (error) {
+      console.error(`[ManualGenerator] ❌ Sync ${task.type} failed: ${task.name}`, error);
+      return { success: false, error: (error as Error).message };
+    }
+  }
+
+  /**
    * 异步处理队列（串行执行，一次一个任务）
    */
   private processQueue(): void {
@@ -98,12 +118,10 @@ class ManualGenerator {
     // 2. 调用 LLM 生成 manual 内容
     const content = await this.generateManualContent(task, messages);
 
-    // 3. 确保目录存在
-    await fs.mkdir(MANUAL_DIR, { recursive: true });
-
-    // 4. 保存文件
+    // 3. 确保目录存在（支持 name 中含分类路径如 "browser/新主题"）
     const filename = `${task.name}.md`;
     const filepath = path.join(MANUAL_DIR, filename);
+    await fs.mkdir(path.dirname(filepath), { recursive: true });
     await fs.writeFile(filepath, content, 'utf-8');
 
     console.log(`[ManualGenerator] Saved to ${filepath} (${content.length} chars)`);

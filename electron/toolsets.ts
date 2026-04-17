@@ -126,25 +126,14 @@ export const TOOLSETS: Record<string, ToolsetDefinition> = {
       // 核心能力
       "memory",                  // 全局核心记忆（AI 主动管理用户画像）
       "todo",                    // 任务管理（会话级任务追踪）
-      // "read_manual",             // 读取操作手册
       "run_command",             // ⭐ 核心：执行命令
-      // "request_agent_mode",      // 🆕 请求升级到 Agent 模式
       "show_available_tools",    // 🆕 显示可用工具列表
       "switch_agent_mode",       // 🆕 切换 Agent 模式
-      
-      // 浏览器 - 核心3工具 + 智能交互
-      // "browser_open",            // 打开网页（Skill）
-      // "browser_read_page",       // 读取页面内容
-      // "browser_screenshot",      // 截图
-      // "browser_click_smart",     // 🆕 智能点击（Skill）
-      // "browser_type_smart",      // 🆕 智能输入（Skill）
       
       // TTS 语音管理
       "manage_tts",              // 🆕 管理本地 TTS 语音合成服务
 
       // 基础工具
-      "calculate",               // 计算器
-      "get_current_datetime",    // 获取当前时间
       "take_screenshot",         // 截图（屏幕）
     ],
   },
@@ -167,14 +156,14 @@ export const TOOLSETS: Record<string, ToolsetDefinition> = {
       "browser_screenshot",      // 截图
       "browser_click_smart",     // 智能点击（Skill）
       "browser_type_smart",      // 智能输入（Skill）
-      "browser_back",            // 后退
       "browser_refresh",         // 刷新
+      // "browser_back",            // 后退
       // "browser_search",          // 搜索引擎
       
       // Skills（高级能力）
-      "open_terminal",           // Skill: 打开终端
+      // "open_terminal",           // Skill: 打开终端
       "write_file",              // Skill: 写入文件
-      "check_python_env",        // Skill: 检查 Python 环境
+      // "check_python_env",        // Skill: 检查 Python 环境
       "manage_tts",              // 🆕 管理本地 TTS 语音合成服务
       
       // OCR 工具
@@ -182,75 +171,11 @@ export const TOOLSETS: Record<string, ToolsetDefinition> = {
       // "sys_find_text_click",     // OCR 查找并点击
       
       // 基础工具
-      "calculate",               // 计算器
-      "get_current_datetime",    // 获取当前时间
+      // "calculate",               // 计算器
+      // "get_current_datetime",    // 获取当前时间
       "take_screenshot",         // 截图（屏幕）
     ],
   },
-  // 原模式
-  // "chat": {
-  //   description: "Chat 模式 - 轻量对话助手",
-  //   tools: [
-  //     // 核心能力
-  //     "memory",                  // 全局核心记忆（AI 主动管理用户画像）
-  //     "todo",                    // 任务管理（会话级任务追踪）
-  //     "read_manual",             // 读取操作手册
-  //     "run_command",             // ⭐ 核心：执行命令
-  //     // "request_agent_mode",      // 🆕 请求升级到 Agent 模式
-  //     "show_available_tools",    // 🆕 显示可用工具列表
-  //     "switch_agent_mode",       // 🆕 切换 Agent 模式
-      
-  //     // 浏览器 - 核心3工具 + 智能交互
-  //     "browser_open",            // 打开网页（Skill）
-  //     "browser_read_page",       // 读取页面内容
-  //     "browser_screenshot",      // 截图
-  //     "browser_click_smart",     // 🆕 智能点击（Skill）
-  //     "browser_type_smart",      // 🆕 智能输入（Skill）
-      
-  //     // 基础工具
-  //     "calculate",               // 计算器
-  //     "get_current_datetime",    // 获取当前时间
-  //     "take_screenshot",         // 截图（屏幕）
-  //   ],
-  // },
-
-  // "agent": {
-  //   description: "Agent 模式 - 全功能自动化助手",
-  //   tools: [
-  //     // 核心能力
-  //     "memory",                  // 全局核心记忆
-  //     "todo",                    // 任务管理
-  //     "read_manual",             // 读取操作手册
-  //     "manual_manage",           // 编辑说明书（Agent 权限）
-  //     "run_command",             // ⭐ 执行命令
-  //     "show_available_tools",    // 显示可用工具列表
-  //     "switch_agent_mode",       // 🆕 切换 Agent 模式
-      
-  //     // 浏览器 - 完整工具集
-  //     "browser_open",            // 打开网页（Skill）
-  //     "browser_read_page",       // 读取页面内容
-  //     "browser_screenshot",      // 截图
-  //     "browser_click_smart",     // 智能点击（Skill）
-  //     "browser_type_smart",      // 智能输入（Skill）
-  //     "browser_back",            // 后退
-  //     "browser_refresh",         // 刷新
-  //     "browser_search",          // 搜索引擎
-      
-  //     // Skills（高级能力）
-  //     "open_terminal",           // Skill: 打开终端
-  //     "write_file",              // Skill: 写入文件
-  //     "check_python_env",        // Skill: 检查 Python 环境
-      
-  //     // OCR 工具
-  //     "sys_find_text",           // OCR 查找文字
-  //     "sys_find_text_click",     // OCR 查找并点击
-      
-  //     // 基础工具
-  //     "calculate",               // 计算器
-  //     "get_current_datetime",    // 获取当前时间
-  //     "take_screenshot",         // 截图（屏幕）
-  //   ],
-  // },
 
   "agent-debug": {
     description: "Agent 调试模式 - 开发者专用（同 Agent，但暴露系统底层工具 + 打工人核心工具）",
@@ -292,13 +217,13 @@ export const TOOLSETS: Record<string, ToolsetDefinition> = {
       "browser_screenshot",
       "browser_click_smart",
       "browser_type_smart",
-      "browser_back",
       "browser_refresh",
       "browser_search",
+      // "browser_back",
       
       // Skills
-      "open_terminal",
-      "check_python_env",
+      // "open_terminal",
+      // "check_python_env",
       "manage_tts",              // 🆕 管理本地 TTS 语音合成服务
       
       // OCR 工具
@@ -313,8 +238,8 @@ export const TOOLSETS: Record<string, ToolsetDefinition> = {
       "sys_wait",                // 等待
       
       // 基础工具
-      "calculate",
-      "get_current_datetime",
+      // "calculate",
+      // "get_current_datetime",
       "take_screenshot",
     ],
   },

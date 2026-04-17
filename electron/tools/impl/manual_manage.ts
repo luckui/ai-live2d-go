@@ -54,30 +54,70 @@ function validateName(name: string): string | null {
 }
 
 /**
- * 检查说明书是否已存在
+ * 检查说明书是否已存在（递归搜索子目录）
  */
 function manualExists(name: string): boolean {
   if (!fs.existsSync(MANUAL_DIR)) return false;
-  const filename = `${name.trim()}.md`;
-  return fs.existsSync(path.join(MANUAL_DIR, filename));
+  return findManualFile(name.trim()) !== null;
 }
 
 /**
- * 列出所有说明书
+ * 递归查找说明书文件，返回完整路径或 null
+ */
+function findManualFile(name: string): string | null {
+  if (!fs.existsSync(MANUAL_DIR)) return null;
+  const target = `${name}.md`;
+
+  function search(dir: string): string | null {
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        const found = search(fullPath);
+        if (found) return found;
+      } else if (entry.name === target) {
+        return fullPath;
+      }
+    }
+    return null;
+  }
+
+  return search(MANUAL_DIR);
+}
+
+/**
+ * 列出所有说明书（递归搜索子目录）
  */
 function listManuals(): string[] {
   if (!fs.existsSync(MANUAL_DIR)) return [];
-  return fs
-    .readdirSync(MANUAL_DIR)
-    .filter(f => f.endsWith('.md'))
-    .map(f => f.replace(/\.md$/, ''));
+  const results: string[] = [];
+
+  function scan(dir: string, prefix: string) {
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        scan(fullPath, prefix ? `${prefix}/${entry.name}` : entry.name);
+      } else if (entry.name.endsWith('.md')) {
+        const name = entry.name.replace(/\.md$/, '');
+        results.push(prefix ? `${prefix}/${name}` : name);
+      }
+    }
+  }
+
+  scan(MANUAL_DIR, '');
+  return results;
 }
 
 interface ManualManageParams {
-  action: 'create' | 'edit' | 'read' | 'list';
+  action: 'create' | 'edit' | 'read' | 'list' | 'patch';
   name?: string;
   title?: string;
   description?: string;
+  category?: string;
+  sync?: boolean;
+  old_string?: string;
+  new_string?: string;
 }
 
 const manualManageTool: ToolDefinition<ManualManageParams> = {
@@ -99,11 +139,12 @@ const manualManageTool: ToolDefinition<ManualManageParams> = {
         '【注意事项】\n' +
         '  • 创建/编辑前必须征得用户同意\n' +
         '  • 跳过简单一次性任务\n' +
-        '  • create/edit 会在后台异步生成内容（不阻塞对话）\n' +
+        '  • create/edit 默认异步生成（不阻塞对话），设 sync=true 可同步等待结果\n' +
         '  • 优秀说明书应包含：触发条件、分步指令、命令示例、常见陷阱、验证步骤\n' +
         '【Actions】\n' +
         '  create - 创建新说明书（需要 name, title, description）\n' +
-        '  edit   - 编辑现有说明书（需要 name, title, description）\n' +
+        '  edit   - LLM 重写整篇说明书（需要 name, title, description）\n' +
+        '  patch  - 局部修正（find-replace，需要 name, old_string, new_string）\n' +
         '  read   - 读取说明书内容（需要 name）\n' +
         '  list   - 列出所有说明书（无需参数）',
       parameters: {
@@ -111,8 +152,8 @@ const manualManageTool: ToolDefinition<ManualManageParams> = {
         properties: {
           action: {
             type: 'string',
-            enum: ['create', 'edit', 'read', 'list'],
-            description: '操作类型：create=创建, edit=编辑, read=读取, list=列出所有',
+            enum: ['create', 'edit', 'read', 'list', 'patch'],
+            description: '操作类型：create=创建, edit=编辑（LLM重写）, patch=局部修正（find-replace）, read=读取, list=列出所有',
           },
           name: {
             type: 'string',
@@ -120,6 +161,13 @@ const manualManageTool: ToolDefinition<ManualManageParams> = {
               '说明书名称（中英文、数字、下划线、连字符、空格）。' +
               'create 时作为新文件名，edit/read 时定位现有文件。' +
               '示例："Git 冲突解决流程"、"Django Migration 修复"',
+          },
+          category: {
+            type: 'string',
+            description:
+              '说明书分类目录（create 时使用）。' +
+              '可选值：dev（开发）、ops（运维/命令行）、workflow（工作流）、browser（浏览器操作）。' +
+              '不填则保存到根目录。',
           },
           title: {
             type: 'string',
@@ -136,13 +184,29 @@ const manualManageTool: ToolDefinition<ManualManageParams> = {
               '应包含：任务背景、关键步骤、预期结果。' +
               '示例："当 git pull 遇到冲突时，如何查看冲突文件、手动解决、验证并提交"',
           },
+          sync: {
+            type: 'boolean',
+            description:
+              'create/edit 是否同步等待生成完成后再返回结果（默认 false=异步后台生成）。' +
+              '当用户主动要求总结/创建说明书时建议设为 true，AI 可以立即查看生成结果。',
+          },
+          old_string: {
+            type: 'string',
+            description:
+              'patch 操作专用：要替换的原文内容。支持精确匹配和空白归一化匹配。',
+          },
+          new_string: {
+            type: 'string',
+            description:
+              'patch 操作专用：替换后的新内容。设为空字符串可删除匹配的文本。',
+          },
         },
         required: ['action'],
       },
     },
   },
 
-  execute({ action, name, title, description }, context?: ToolContext): string {
+  execute({ action, name, title, description, category, sync, old_string, new_string }, context?: ToolContext): string | Promise<string> {
     // ── list：列出所有说明书 ──────────────────────────────────────
     if (action === 'list') {
       const manuals = listManuals();
@@ -165,9 +229,8 @@ const manualManageTool: ToolDefinition<ManualManageParams> = {
       if (!name) {
         return '❌ read 操作需要 name 参数';
       }
-      const filename = `${name.trim()}.md`;
-      const filepath = path.join(MANUAL_DIR, filename);
-      if (!fs.existsSync(filepath)) {
+      const filepath = findManualFile(name.trim());
+      if (!filepath) {
         const manuals = listManuals();
         return (
           `❌ 未找到说明书"${name}"。\n\n` +
@@ -202,14 +265,36 @@ const manualManageTool: ToolDefinition<ManualManageParams> = {
         return `❌ 说明书"${name}"已存在。使用 action="edit" 进行编辑。`;
       }
 
-      // 异步后台生成
+      // 拼接分类路径：category="browser" + name="搜索流程" → "browser/搜索流程"
+      const fullName = category ? `${category.trim()}/${name.trim()}` : name.trim();
+
       const generator = getManualGenerator();
-      generator.queueCreate({
-        name: name.trim(),
+      const taskPayload = {
+        name: fullName,
         title: title.trim(),
         description: description.trim(),
         conversationId: context?.conversationId,
-      });
+      };
+
+      // 同步模式：阻塞等待生成完成
+      if (sync) {
+        return (async () => {
+          const result = await generator.syncExecute({ type: 'create', ...taskPayload });
+          if (!result.success) {
+            return `❌ 说明书"${name}"生成失败：${result.error}`;
+          }
+          const preview = result.content && result.content.length > 800
+            ? result.content.slice(0, 800) + `\n\n…（已截断，完整 ${result.content.length} 字）`
+            : result.content;
+          return (
+            `✅ 说明书"${name}"已生成并保存。\n\n` +
+            `📖 内容预览：\n${preview}`
+          );
+        })();
+      }
+
+      // 异步模式（默认）：排队后台生成
+      generator.queueCreate(taskPayload);
 
       return (
         `✅ 说明书"${name}"创建请求已排队，正在后台生成中...\n` +
@@ -229,14 +314,33 @@ const manualManageTool: ToolDefinition<ManualManageParams> = {
         return `❌ 说明书"${name}"不存在。使用 action="create" 创建新说明书。`;
       }
 
-      // 异步后台更新
       const generator = getManualGenerator();
-      generator.queueEdit({
+      const taskPayload = {
         name: name.trim(),
         title: title.trim(),
         description: description.trim(),
         conversationId: context?.conversationId,
-      });
+      };
+
+      // 同步模式：阻塞等待生成完成
+      if (sync) {
+        return (async () => {
+          const result = await generator.syncExecute({ type: 'edit', ...taskPayload });
+          if (!result.success) {
+            return `❌ 说明书"${name}"更新失败：${result.error}`;
+          }
+          const preview = result.content && result.content.length > 800
+            ? result.content.slice(0, 800) + `\n\n…（已截断，完整 ${result.content.length} 字）`
+            : result.content;
+          return (
+            `✅ 说明书"${name}"已更新完成。\n\n` +
+            `📖 内容预览：\n${preview}`
+          );
+        })();
+      }
+
+      // 异步模式（默认）：排队后台更新
+      generator.queueEdit(taskPayload);
 
       return (
         `✅ 说明书"${name}"编辑请求已排队，正在后台更新中...\n` +
@@ -245,6 +349,110 @@ const manualManageTool: ToolDefinition<ManualManageParams> = {
         `更新完成后将自动保存到 ${MANUAL_DIR}/${name}.md\n` +
         `你可以继续对话，生成过程不会阻塞当前会话。`
       );
+    }
+
+    // ── patch：局部修正（find-and-replace） ──────────────────────
+    if (action === 'patch') {
+      if (!name) {
+        return '❌ patch 操作需要 name 参数';
+      }
+      if (!old_string) {
+        return '❌ patch 操作需要 old_string 参数（要替换的原文内容）';
+      }
+      if (new_string === undefined || new_string === null) {
+        return '❌ patch 操作需要 new_string 参数（替换后的新内容，设为空字符串可删除匹配文本）';
+      }
+
+      const filepath = findManualFile(name.trim());
+      if (!filepath) {
+        const manuals = listManuals();
+        return (
+          `❌ 未找到说明书"${name}"。\n\n` +
+          `当前可用说明书：${manuals.join('、')}\n\n` +
+          '请检查名称是否正确。'
+        );
+      }
+
+      try {
+        const content = fs.readFileSync(filepath, 'utf-8');
+
+        // 两级匹配：① 精确匹配 ② 空白归一化匹配
+        let matchCount = 0;
+        let newContent: string;
+
+        // ① 精确匹配
+        const exactCount = content.split(old_string).length - 1;
+        if (exactCount === 1) {
+          newContent = content.replace(old_string, new_string);
+          matchCount = 1;
+        } else if (exactCount > 1) {
+          return (
+            `❌ old_string 在说明书"${name}"中匹配了 ${exactCount} 处，需要唯一匹配。\n` +
+            '请提供更多上下文使匹配唯一。'
+          );
+        } else {
+          // ② 空白归一化匹配：折叠连续空白为单空格后匹配
+          const normalize = (s: string) => s.replace(/\s+/g, ' ').trim();
+          const normalizedOld = normalize(old_string);
+          const normalizedContent = normalize(content);
+
+          const idx = normalizedContent.indexOf(normalizedOld);
+          if (idx === -1) {
+            // 提供文件前 500 字帮助 AI 定位
+            const preview = content.slice(0, 500) + (content.length > 500 ? '...' : '');
+            return (
+              `❌ 未在说明书"${name}"中找到匹配内容。\n\n` +
+              `📖 文件前 500 字预览：\n${preview}`
+            );
+          }
+
+          // 检查唯一性
+          const secondIdx = normalizedContent.indexOf(normalizedOld, idx + 1);
+          if (secondIdx !== -1) {
+            return (
+              `❌ 空白归一化后匹配了多处，需要唯一匹配。\n` +
+              '请提供更多上下文使匹配唯一。'
+            );
+          }
+
+          // 反向定位原始内容中的对应区间
+          // 用逐字符映射：normalized 字符位置 → 原始字符位置
+          const origPositions: number[] = [];
+          let nPos = 0;
+          let inWhitespace = false;
+          for (let i = 0; i < content.length; i++) {
+            if (/\s/.test(content[i])) {
+              if (!inWhitespace) {
+                origPositions.push(i);
+                nPos++;
+                inWhitespace = true;
+              }
+            } else {
+              origPositions.push(i);
+              nPos++;
+              inWhitespace = false;
+            }
+          }
+
+          // 偏移映射：如果 normalized 被 trim 了开头空白，需要跳过
+          const leadingTrimmed = normalizedContent.length < nPos ? 0 : 0;
+          const origStart = origPositions[idx + leadingTrimmed] ?? 0;
+          const origEnd = (origPositions[idx + normalizedOld.length + leadingTrimmed - 1] ?? content.length - 1) + 1;
+
+          newContent = content.slice(0, origStart) + new_string + content.slice(origEnd);
+          matchCount = 1;
+        }
+
+        fs.writeFileSync(filepath, newContent, 'utf-8');
+
+        return (
+          `✅ 已修正说明书"${name}"（${matchCount} 处替换）。\n` +
+          `替换内容：\n  - 旧：${old_string.slice(0, 100)}${old_string.length > 100 ? '...' : ''}\n` +
+          `  + 新：${new_string.slice(0, 100)}${new_string.length > 100 ? '...' : ''}`
+        );
+      } catch (e) {
+        return `❌ patch 操作失败：${(e as Error).message}`;
+      }
     }
 
     return `❌ 未知操作：${action}`;

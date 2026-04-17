@@ -9,6 +9,8 @@ import { memoryManager, globalMemoryManager, recordMessageActivity } from './mem
 import { stripThinkTags } from './utils/textUtils';
 import { fetchCompletion } from './llmClient';
 import { getManualTopicsForPrompt } from './tools/impl/manual';
+import { buildChatPrompt } from './prompts/chat';
+import { buildAgentPrompt } from './prompts/agent';
 import { buildDeveloperPrompt } from './prompts/developer';
 
 // ── 工具调用调试事件 ─────────────────────────────────────
@@ -198,9 +200,9 @@ async function _callWithToolLoopInternal(
   const msgBuf: ChatMessage[] = [...messages];
   let antiHallucinationNudgeUsed = false;
 
-  // 🆕 开发者模式：大幅增加循环次数，依赖用户主动停止
+  // 模式感知的最大循环轮数：chat 轻量 / agent 标准 / developer 深度
   const currentMode = getAgentMode();
-  const MAX_ROUNDS = currentMode === 'developer' ? 200 : 25;
+  const MAX_ROUNDS = ({ chat: 10, agent: 25, 'agent-debug': 25, developer: 200 } as Record<string, number>)[currentMode] ?? 25;
   
   for (let round = 0; round < MAX_ROUNDS; round++) {
     // 🆕 检查中断信号
@@ -388,18 +390,29 @@ export async function sendChatMessage(
   // 2. 构建上下文（含刚保存的 user 消息）
   const context = getRecentContext(conversationId, aiConfig.contextWindowRounds);
 
-  // 将本对话历史片段 + 全局核心记忆 一并 append 到角色提示词末尾
-  const memoryAppend =
-    memoryManager.buildMemoryAppend(conversationId) +
-    globalMemoryManager.buildGlobalMemoryAppend();
-  // 动态注入说明书目录（每次对话初始化时刷新，新增/删除文件立即生效）
-  const manualTopics = getManualTopicsForPrompt();
-
-  // 🆕 Developer 模式：切换为软件工程师专属提示词
+  // ── 模式感知的上下文工程 ─────────────────────────────────────
+  // 提示词、记忆、说明书按模式精细化注入，节省 token 但不缺功能
   const currentAgentMode = getAgentMode();
-  const basePrompt = currentAgentMode === 'developer'
-    ? buildDeveloperPrompt()
-    : (provider.systemPrompt ?? '');
+
+  // 提示词：三档人格（chat=桌宠 / agent=助手 / developer=工程师）
+  const basePrompt = (() => {
+    switch (currentAgentMode) {
+      case 'chat':      return buildChatPrompt();
+      case 'developer': return buildDeveloperPrompt();
+      default:          return buildAgentPrompt(); // agent, agent-debug
+    }
+  })();
+
+  // 说明书目录：chat 无 read_manual 工具，不注入
+  const manualTopics = currentAgentMode === 'chat' ? '' : getManualTopicsForPrompt();
+
+  // 记忆：chat 仅注入用户画像，agent/developer 注入完整记忆（含环境配置）
+  const memoryAppend = memoryManager.buildMemoryAppend(conversationId) + (
+    currentAgentMode === 'chat'
+      ? globalMemoryManager.buildUserProfileOnly()
+      : globalMemoryManager.buildGlobalMemoryAppend()
+  );
+
   const systemContent = basePrompt + manualTopics + memoryAppend;
 
   const messages: ChatMessage[] = [
@@ -407,9 +420,9 @@ export async function sendChatMessage(
     ...context.map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content })),
   ];
 
-  // 任务意图预提示：用户消息含请求性字眼时，在第一轮前轻量注入，
-  // 提醒 AI 主动判断是否需要调用工具，减少"口头描述代替实际执行"的幻觉。
-  if (toolRegistry.isEmpty === false && isLikelyTaskRequest(userContent)) {
+  // 任务意图预提示：agent/developer 模式下，用户消息含请求性字眼时轻量注入
+  // chat 模式以自然对话为主，不强制工具调用
+  if (currentAgentMode !== 'chat' && toolRegistry.isEmpty === false && isLikelyTaskRequest(userContent)) {
     messages.push({
       role: 'user',
       content: '【系统提示】检测到用户可能在请求执行一项任务。请先判断：这是需要调用工具才能完成的操作，还是普通聊天？如果需要工具，直接调用，不要只用文字描述你打算做什么。',

@@ -36,26 +36,37 @@ const MANUAL_DIR = app.isPackaged
   ? path.join(process.resourcesPath, 'electron', 'manual')
   : path.join(app.getAppPath(), 'electron', 'manual');
 
-/** 读取 manual 目录下所有 .md 文件，返回 { name, firstLine } 列表 */
-function listTopics(): Array<{ name: string; summary: string }> {
+/** 递归读取 manual 目录下所有 .md 文件，返回 { name, summary, category, filePath } 列表 */
+function listTopics(): Array<{ name: string; summary: string; category: string; filePath: string }> {
   if (!fs.existsSync(MANUAL_DIR)) return [];
-  return fs
-    .readdirSync(MANUAL_DIR)
-    .filter(f => f.endsWith('.md'))
-    .map(f => {
-      const topicName = f.replace(/\.md$/, '');
-      let summary = '';
-      try {
-        const content = fs.readFileSync(path.join(MANUAL_DIR, f), 'utf-8');
-        // 取第一行非空非标题符号的文字作为摘要
-        const firstLine = content
-          .split('\n')
-          .map(l => l.replace(/^#+\s*/, '').trim())
-          .find(l => l.length > 0) ?? '';
-        summary = firstLine.slice(0, 60);
-      } catch { /* ignore */ }
-      return { name: topicName, summary };
-    });
+
+  const results: Array<{ name: string; summary: string; category: string; filePath: string }> = [];
+
+  function scanDir(dir: string, category: string) {
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        // 递归子目录，子目录名作为分类
+        scanDir(fullPath, entry.name);
+      } else if (entry.name.endsWith('.md')) {
+        const topicName = entry.name.replace(/\.md$/, '');
+        let summary = '';
+        try {
+          const content = fs.readFileSync(fullPath, 'utf-8');
+          const firstLine = content
+            .split('\n')
+            .map(l => l.replace(/^#+\s*/, '').trim())
+            .find(l => l.length > 0) ?? '';
+          summary = firstLine.slice(0, 60);
+        } catch { /* ignore */ }
+        results.push({ name: topicName, summary, category, filePath: fullPath });
+      }
+    }
+  }
+
+  scanDir(MANUAL_DIR, '');
+  return results;
 }
 
 /**
@@ -66,50 +77,52 @@ function listTopics(): Array<{ name: string; summary: string }> {
  *   ② 文件名包含 topic 整体
  *   ③ topic 拆词后，文件名包含任意一个词（词长 ≥ 2）
  *   ④ 全文搜索：各文件正文中 topic 各词的命中次数求和，返回得分最高的
+ *
+ * 支持递归子目录搜索。
  */
 function resolveTopicFile(topic: string): string | null {
-  if (!fs.existsSync(MANUAL_DIR)) return null;
+  const topics = listTopics();
+  if (topics.length === 0) return null;
+
   const topicLower = topic.toLowerCase().trim();
-  const files = fs.readdirSync(MANUAL_DIR).filter(f => f.endsWith('.md'));
-  if (files.length === 0) return null;
 
   // 拆词：按空格、标点、CJK 边界拆分，过滤掉长度 < 2 的词
   const words = topicLower
     .split(/[\s\p{P}\p{Z}，。、？！：；""''（）【】]/u)
     .filter(w => w.length >= 2);
 
-  // ① 精确
-  const exact = files.find(f => f.replace(/\.md$/, '').toLowerCase() === topicLower);
-  if (exact) return path.join(MANUAL_DIR, exact);
+  // ① 精确匹配文件名
+  const exact = topics.find(t => t.name.toLowerCase() === topicLower);
+  if (exact) return exact.filePath;
 
-  // ② 整体包含
-  const fuzzy = files.find(f => f.toLowerCase().includes(topicLower));
-  if (fuzzy) return path.join(MANUAL_DIR, fuzzy);
+  // ② 文件名包含 topic 整体
+  const fuzzy = topics.find(t => t.name.toLowerCase().includes(topicLower));
+  if (fuzzy) return fuzzy.filePath;
 
   // ③ 任意词命中文件名
   if (words.length > 0) {
-    const wordHit = files.find(fName => {
-      const fn = fName.toLowerCase();
+    const wordHit = topics.find(t => {
+      const fn = t.name.toLowerCase();
       return words.some(w => fn.includes(w));
     });
-    if (wordHit) return path.join(MANUAL_DIR, wordHit);
+    if (wordHit) return wordHit.filePath;
   }
 
   // ④ 全文搜索：各词命中次数求和，取最高分
   const searchWords = words.length > 0 ? words : [topicLower];
-  let bestFile: string | null = null;
+  let bestTopic: typeof topics[0] | null = null;
   let bestScore = 0;
-  for (const f of files) {
+  for (const t of topics) {
     try {
-      const content = fs.readFileSync(path.join(MANUAL_DIR, f), 'utf-8').toLowerCase();
+      const content = fs.readFileSync(t.filePath, 'utf-8').toLowerCase();
       const score = searchWords.reduce((sum, w) => sum + (content.split(w).length - 1), 0);
       if (score > bestScore) {
         bestScore = score;
-        bestFile = f;
+        bestTopic = t;
       }
     } catch { /* ignore */ }
   }
-  if (bestFile) return path.join(MANUAL_DIR, bestFile);
+  if (bestTopic) return bestTopic.filePath;
 
   return null;
 }
@@ -121,13 +134,27 @@ function resolveTopicFile(topic: string): string | null {
 export function getManualTopicsForPrompt(): string {
   const topics = listTopics();
   if (topics.length === 0) return '';
-  const lines = topics.map(t =>
-    t.summary ? `  • ${t.name}（${t.summary}）` : `  • ${t.name}`
-  );
+
+  // 按分类分组
+  const grouped = new Map<string, typeof topics>();
+  for (const t of topics) {
+    const cat = t.category || '通用';
+    if (!grouped.has(cat)) grouped.set(cat, []);
+    grouped.get(cat)!.push(t);
+  }
+
+  const lines: string[] = [];
+  for (const [cat, items] of grouped) {
+    if (cat && cat !== '通用') lines.push(`  [${cat}]`);
+    for (const t of items) {
+      lines.push(t.summary ? `    • ${t.name}（${t.summary}）` : `    • ${t.name}`);
+    }
+  }
+
   return (
     '\n\n【可用说明书目录】（共 ' + topics.length + ' 篇）\n' +
     lines.join('\n') + '\n' +
-    '遇到不确定的命令写法时，直接调用 read_manual(topic="主题名") 查阅，topic 支持模糊匹配和全文搜索。'
+    '调用 read_manual(topic="主题名") 查阅，topic 支持模糊匹配和跨目录搜索。'
   );
 }
 
@@ -184,9 +211,23 @@ const readManualTool: ToolDefinition<ReadManualParams> = {
           '请在该目录下创建 .md 文件，每个文件对应一个主题（如"命令行操作.md"）。'
         );
       }
-      const lines = topics.map(t =>
-        t.summary ? `  • ${t.name}  —  ${t.summary}` : `  • ${t.name}`
-      );
+
+      // 按分类分组展示
+      const grouped = new Map<string, typeof topics>();
+      for (const t of topics) {
+        const cat = t.category || '通用';
+        if (!grouped.has(cat)) grouped.set(cat, []);
+        grouped.get(cat)!.push(t);
+      }
+
+      const lines: string[] = [];
+      for (const [cat, items] of grouped) {
+        if (cat && cat !== '通用') lines.push(`\n📂 ${cat}/`);
+        for (const t of items) {
+          lines.push(t.summary ? `  • ${t.name}  —  ${t.summary}` : `  • ${t.name}`);
+        }
+      }
+
       return (
         `📖 可用说明书主题（共 ${topics.length} 篇）：\n${lines.join('\n')}\n\n` +
         '调用 read_manual(topic="主题名") 查阅具体内容。'

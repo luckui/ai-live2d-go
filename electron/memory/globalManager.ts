@@ -78,6 +78,26 @@ export class GlobalMemoryManager {
   }
 
   /**
+   * 构建仅包含 USER 画像的记忆提示词（Chat 模式专用）。
+   * 跳过 MEMORY（环境配置和工具经验）分块，为轻量对话节省 token。
+   */
+  buildUserProfileOnly(): string {
+    const mem = getStructuredGlobalMemory();
+    if (mem.user.length === 0) return '';
+
+    const userChars = mem.user.join('').length;
+    const userPct = Math.min(100, Math.round((userChars / 1100) * 100));
+    const separator = '═'.repeat(46);
+
+    return '\n\n' + [
+      `\n${separator}`,
+      `USER PROFILE（用户画像）[${userPct}% — ${userChars}/1100 字]`,
+      separator,
+      mem.user.join('\n§\n'),
+    ].join('\n');
+  }
+
+  /**
    * 可 await 的全局记忆精炼。
    * 供 memory/index.ts 的离开对话流水线链式调用，保证在本地摘要完成后执行。
    * 若失败，日志记录但不抛出（不阻塞离开流程）。
