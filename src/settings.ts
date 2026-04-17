@@ -63,6 +63,12 @@ interface TTSConfig {
   deletedProviders?: string[];
 }
 
+/** 内置 TTS 方案，不允许删除 */
+const BUILTIN_TTS_PROVIDERS = ['local_edge_tts', 'local_moss_nano'];
+
+/** 内置 LLM 方案，不允许删除 */
+const BUILTIN_LLM_PROVIDERS = ['doubao', 'qwen35'];
+
 interface MemoryExportResult {
   success: boolean;
   path?: string;
@@ -153,9 +159,11 @@ function renderForm(): void {
   (document.getElementById('s-tokens')    as HTMLInputElement).value  = String(p.maxTokens  ?? 1024);
   (document.getElementById('s-sysprompt') as HTMLTextAreaElement).value = p.systemPrompt ?? '';
 
-  // 只有一个 provider 时隐藏删除按钮
+  // 内置方案或只有一个 provider 时隐藏删除按钮
   const delBtn = document.getElementById('s-del-btn') as HTMLButtonElement;
-  delBtn.style.visibility = Object.keys(cfg.providers).length <= 1 ? 'hidden' : 'visible';
+  const isBuiltin = BUILTIN_LLM_PROVIDERS.includes(editKey);
+  const onlyOne = Object.keys(cfg.providers).length <= 1;
+  delBtn.style.visibility = (isBuiltin || onlyOne) ? 'hidden' : 'visible';
 }
 
 // ── Provider Select ─────────────────────────────────────
@@ -563,9 +571,11 @@ function renderTTSForm(): void {
 
 
 
-  // 只有一个 provider 时隐藏删除
+  // 内置方案或只有一个 provider 时隐藏删除按钮
   const delBtn = document.getElementById('tts-del-btn') as HTMLButtonElement;
-  delBtn.style.visibility = Object.keys(ttsCfg.providers).length <= 1 ? 'hidden' : 'visible';
+  const isBuiltin = BUILTIN_TTS_PROVIDERS.includes(ttsEditKey);
+  const onlyOne = Object.keys(ttsCfg.providers).length <= 1;
+  delBtn.style.visibility = (isBuiltin || onlyOne) ? 'hidden' : 'visible';
 
   // 本地服务管理区域：仅 isLocal 时显示，且更新提示文本
   const localSection = document.getElementById('tts-local-section') as HTMLElement;
@@ -630,6 +640,13 @@ function addTTSProvider(): void {
 function deleteTTSProvider(): void {
   if (!ttsCfg || !ttsEditKey) return;
   if (Object.keys(ttsCfg.providers).length <= 1) return;
+  
+  // 禁止删除内置 TTS 方案
+  if (BUILTIN_TTS_PROVIDERS.includes(ttsEditKey)) {
+    alert('内置 TTS 方案不允许删除');
+    return;
+  }
+  
   if (ttsEditKey === ttsCfg.activeProvider) {
     ttsCfg.activeProvider = Object.keys(ttsCfg.providers).filter(k => k !== ttsEditKey)[0];
   }
@@ -833,6 +850,13 @@ function addProvider(): void {
 
 function deleteProvider(): void {
   if (!cfg || !editKey || Object.keys(cfg.providers).length <= 1) return;
+  
+  // 禁止删除内置 LLM 方案
+  if (BUILTIN_LLM_PROVIDERS.includes(editKey)) {
+    alert('内置 LLM 方案不允许删除');
+    return;
+  }
+  
   if (editKey === cfg.activeProvider) {
     const remaining = Object.keys(cfg.providers).filter((k) => k !== editKey);
     cfg.activeProvider = remaining[0];
