@@ -96,6 +96,19 @@ export class ToolRegistry {
   }
 
   /**
+   * 按工具名列表获取 schema（用于子智能体工具集过滤）
+   * @param names - 工具名数组
+   * @returns 匹配且可用的工具 schema 数组
+   */
+  getSchemasByNames(names: string[]): ToolSchema[] {
+    const nameSet = new Set(names);
+    return [...this.tools.values()]
+      .filter(t => nameSet.has(t.schema.function.name))
+      .filter(t => !t.checkAvailable || t.checkAvailable())
+      .map(t => t.schema);
+  }
+
+  /**
    * @deprecated 使用 getSchemasForToolset 替代
    *
    * Skill 优先模式下的 schema 列表（旧架构，保留兼容性）

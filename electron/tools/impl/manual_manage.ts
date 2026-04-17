@@ -22,6 +22,7 @@ import * as path from 'path';
 import { app } from 'electron';
 import type { ToolDefinition, ToolContext } from '../types';
 import { getManualGenerator } from '../../manual/manualGenerator';
+import { taskManager } from '../../taskManager';
 
 /**
  * 说明书目录路径（兼容开发模式和打包后）
@@ -293,15 +294,22 @@ const manualManageTool: ToolDefinition<ManualManageParams> = {
         })();
       }
 
-      // 异步模式（默认）：排队后台生成
-      generator.queueCreate(taskPayload);
+      // 异步模式（默认）：通过 TaskManager 统一调度
+      const task = taskManager.createAndStart({
+        title: `说明书: ${name}`,
+        prompt: description.trim(),
+        conversationId: context?.conversationId,
+        type: 'manual',
+        metadata: { manualAction: 'create', name: fullName, title: title.trim(), description: description.trim() },
+      });
 
       return (
-        `✅ 说明书"${name}"创建请求已排队，正在后台生成中...\n` +
+        `✅ 说明书"${name}"创建请求已提交，正在后台生成中...\n` +
+        `🆔 任务 ID: ${task.id}\n` +
         `📝 标题：${title}\n` +
         `📋 描述：${description}\n\n` +
-        `生成完成后将自动保存到 ${MANUAL_DIR}/${name}.md\n` +
-        `你可以继续对话，生成过程不会阻塞当前会话。`
+        `生成完成后将自动保存到 ${MANUAL_DIR}/${fullName}.md\n` +
+        `你可以用 async_task status 查询进度。`
       );
     }
 
@@ -339,15 +347,22 @@ const manualManageTool: ToolDefinition<ManualManageParams> = {
         })();
       }
 
-      // 异步模式（默认）：排队后台更新
-      generator.queueEdit(taskPayload);
+      // 异步模式（默认）：通过 TaskManager 统一调度
+      const task = taskManager.createAndStart({
+        title: `说明书编辑: ${name}`,
+        prompt: description.trim(),
+        conversationId: context?.conversationId,
+        type: 'manual',
+        metadata: { manualAction: 'edit', name: name.trim(), title: title.trim(), description: description.trim() },
+      });
 
       return (
-        `✅ 说明书"${name}"编辑请求已排队，正在后台更新中...\n` +
+        `✅ 说明书"${name}"编辑请求已提交，正在后台更新中...\n` +
+        `🆔 任务 ID: ${task.id}\n` +
         `📝 新标题：${title}\n` +
         `📋 新描述：${description}\n\n` +
         `更新完成后将自动保存到 ${MANUAL_DIR}/${name}.md\n` +
-        `你可以继续对话，生成过程不会阻塞当前会话。`
+        `你可以用 async_task status 查询进度。`
       );
     }
 
@@ -418,24 +433,23 @@ const manualManageTool: ToolDefinition<ManualManageParams> = {
           // 反向定位原始内容中的对应区间
           // 用逐字符映射：normalized 字符位置 → 原始字符位置
           const origPositions: number[] = [];
-          let nPos = 0;
           let inWhitespace = false;
           for (let i = 0; i < content.length; i++) {
             if (/\s/.test(content[i])) {
               if (!inWhitespace) {
                 origPositions.push(i);
-                nPos++;
                 inWhitespace = true;
               }
             } else {
               origPositions.push(i);
-              nPos++;
               inWhitespace = false;
             }
           }
 
-          // 偏移映射：如果 normalized 被 trim 了开头空白，需要跳过
-          const leadingTrimmed = normalizedContent.length < nPos ? 0 : 0;
+          // 偏移映射：normalize 的 trim() 会去掉前导空白
+          // 计算 replace(/\s+/g, ' ') 后、trim() 前的字符串，看 trim 掉了多少前导字符
+          const preNormalized = content.replace(/\s+/g, ' ');
+          const leadingTrimmed = preNormalized.length - preNormalized.trimStart().length;
           const origStart = origPositions[idx + leadingTrimmed] ?? 0;
           const origEnd = (origPositions[idx + normalizedOld.length + leadingTrimmed - 1] ?? content.length - 1) + 1;
 

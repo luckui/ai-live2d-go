@@ -1,23 +1,21 @@
 /**
- * ManualGenerator - 异步后台工作流总结生成器
+ * ManualGenerator - 说明书生成器（纯执行逻辑）
  *
  * 职责：
- *   1. 接收 create/edit 请求并排队
- *   2. 后台异步调用 LLM 总结会话历史
- *   3. 生成结构化 markdown 说明书
- *   4. 保存到 electron/manual/ 目录
+ *   1. 调用 LLM 总结会话历史，生成结构化 markdown 说明书
+ *   2. 保存到 electron/manual/ 目录
  *
- * 设计原则：
- *   - queueCreate/queueEdit 立即返回（不阻塞对话）
- *   - 串行处理队列（避免 LLM 并发调用）
- *   - 失败不影响主对话流程（仅记录日志）
- *   - 支持会话上下文（通过 conversationId 获取历史消息）
+ * 异步调度由 TaskManager 统一管理（type: 'manual'），
+ * 本模块只负责 LLM 调用 + 文件写入。
+ *
+ * 同步模式（syncExecute）供 manual_manage 工具直接调用。
  */
 
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { app } from 'electron';
 import { getMessages } from '../db';
+import type { DBTask } from '../db';
 import { fetchCompletion } from '../llmClient';
 import aiConfig from '../ai.config';
 import type { ChatMessage } from '../tools/types';
@@ -33,7 +31,7 @@ const MANUAL_DIR = app.isPackaged
   ? path.join(process.resourcesPath, 'electron', 'manual')
   : path.join(app.getAppPath(), 'electron', 'manual');
 
-interface GenerationTask {
+export interface GenerationTask {
   type: 'create' | 'edit';
   name: string;
   title: string;
@@ -42,40 +40,15 @@ interface GenerationTask {
 }
 
 class ManualGenerator {
-  private queue: GenerationTask[] = [];
-  private processing = false;
-
-  /**
-   * 排队创建新说明书
-   */
-  queueCreate(task: Omit<GenerationTask, 'type'>): void {
-    this.queue.push({ type: 'create', ...task });
-    console.log(`[ManualGenerator] Queued create: ${task.name} (queue size: ${this.queue.length})`);
-    this.processQueue();
-  }
-
-  /**
-   * 排队编辑现有说明书
-   */
-  queueEdit(task: Omit<GenerationTask, 'type'>): void {
-    this.queue.push({ type: 'edit', ...task });
-    console.log(`[ManualGenerator] Queued edit: ${task.name} (queue size: ${this.queue.length})`);
-    this.processQueue();
-  }
 
   /**
    * 同步执行创建或编辑（阻塞直到生成完成，返回生成结果）
-   * 用于用户主动要求总结说明书的场景
+   * 用于用户主动要求总结说明书的场景（sync=true）
    */
   async syncExecute(task: GenerationTask): Promise<{ success: boolean; content?: string; error?: string }> {
     console.log(`[ManualGenerator] Sync ${task.type}: ${task.name}`);
     try {
-      await this.executeTask(task);
-      // 读回保存的文件内容返回给调用方
-      const filename = `${task.name}.md`;
-      const filepath = path.join(MANUAL_DIR, filename);
-      const { readFile } = await import('fs/promises');
-      const content = await readFile(filepath, 'utf-8');
+      const content = await this.execute(task);
       return { success: true, content };
     } catch (error) {
       console.error(`[ManualGenerator] ❌ Sync ${task.type} failed: ${task.name}`, error);
@@ -84,33 +57,13 @@ class ManualGenerator {
   }
 
   /**
-   * 异步处理队列（串行执行，一次一个任务）
+   * 执行单个生成任务：LLM 调用 + 文件写入 + 返回生成内容
+   *
+   * 供两个入口调用：
+   *   - syncExecute() — manual_manage 工具的同步路径
+   *   - executeManualTask() — TaskManager 的异步分发路径
    */
-  private processQueue(): void {
-    if (this.processing || this.queue.length === 0) return;
-
-    this.processing = true;
-    const task = this.queue.shift()!;
-
-    console.log(`[ManualGenerator] Processing ${task.type}: ${task.name}`);
-
-    setImmediate(async () => {
-      try {
-        await this.executeTask(task);
-        console.log(`[ManualGenerator] ✅ ${task.type} completed: ${task.name}`);
-      } catch (error) {
-        console.error(`[ManualGenerator] ❌ ${task.type} failed: ${task.name}`, error);
-      } finally {
-        this.processing = false;
-        this.processQueue(); // 继续处理队列
-      }
-    });
-  }
-
-  /**
-   * 执行单个生成任务
-   */
-  private async executeTask(task: GenerationTask): Promise<void> {
+  async execute(task: GenerationTask): Promise<string> {
     // 1. 获取会话历史
     const messages = task.conversationId ? getMessages(task.conversationId) : [];
     console.log(`[ManualGenerator] Retrieved ${messages.length} messages from conversation ${task.conversationId}`);
@@ -125,6 +78,7 @@ class ManualGenerator {
     await fs.writeFile(filepath, content, 'utf-8');
 
     console.log(`[ManualGenerator] Saved to ${filepath} (${content.length} chars)`);
+    return content;
   }
 
   /**
@@ -655,16 +609,6 @@ class ManualGenerator {
     
     return fixed;
   }
-
-  /**
-   * 获取当前队列状态（用于调试）
-   */
-  getQueueStatus(): { processing: boolean; queueLength: number } {
-    return {
-      processing: this.processing,
-      queueLength: this.queue.length,
-    };
-  }
 }
 
 // 单例模式
@@ -672,4 +616,22 @@ const manualGenerator = new ManualGenerator();
 
 export function getManualGenerator(): ManualGenerator {
   return manualGenerator;
+}
+
+/**
+ * TaskManager 分发入口：从 DBTask 提取参数，调用 ManualGenerator.execute()
+ *
+ * TaskManager._startAsync() 中 type === 'manual' 时调用此函数。
+ * metadata 中应包含 { manualAction, name, title, description }
+ */
+export async function executeManualTask(task: DBTask): Promise<string> {
+  const meta = task.metadata ? JSON.parse(task.metadata) : {};
+  const genTask: GenerationTask = {
+    type: meta.manualAction ?? 'create',
+    name: meta.name ?? task.title,
+    title: meta.title ?? task.title,
+    description: meta.description ?? task.prompt,
+    conversationId: task.conversation_id ?? undefined,
+  };
+  return manualGenerator.execute(genTask);
 }

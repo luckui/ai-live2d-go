@@ -101,6 +101,8 @@ import defaultTTSConfig from './tts.config';
 import type { TTSConfig, TTSProviderConfig } from './tts.config';
 import { getAgentMode, setAgentMode } from './agentMode';
 import * as ttsServerManager from './ttsServerManager';
+import { taskManager } from './taskManager';
+import { taskScheduler } from './taskScheduler';
 
 // ── 实运行时加载持久化的 LLM 配置 ──────────────────────────────
 
@@ -669,6 +671,29 @@ function createWindow(): void {
   });
 
   ipcMain.handle('tts:local:stop', (_e, engine?: string) => ttsServerManager.stopServer(engine));
+
+  // ── 异步任务管理 ──────────────────────────────────────────────
+  ipcMain.handle('task:list', (_e, statusFilter?: string) => {
+    return taskManager.listTasks(statusFilter ? { status: statusFilter as any } : undefined);
+  });
+
+  ipcMain.handle('task:detail', (_e, taskId: string) => {
+    return taskManager.getTask(taskId);
+  });
+
+  ipcMain.handle('task:cancel', (_e, taskId: string) => {
+    return taskManager.cancelTask(taskId);
+  });
+
+  // ── 异步任务事件推送到渲染层 ────────────────────────────────────
+  const pushTaskEvent = (channel: string) => (payload: any) => {
+    mainWin?.webContents?.send(channel, payload);
+  };
+  taskManager.on('task:started',   pushTaskEvent('task:started'));
+  taskManager.on('task:completed', pushTaskEvent('task:completed'));
+  taskManager.on('task:failed',    pushTaskEvent('task:failed'));
+  taskManager.on('task:cancelled', pushTaskEvent('task:cancelled'));
+  taskManager.on('task:progress',  pushTaskEvent('task:progress'));
 }
 
 app.whenReady().then(() => {
@@ -699,12 +724,18 @@ app.whenReady().then(() => {
 
   // ── 空闲调度器：用户停止聊天 10 分钟后自动后台总结 ──
   startIdleScheduler(() => activeConversationId);
+
+  // ── 定时任务调度器 ──
+  taskScheduler.start();
 });
 
 /** 防止 before-quit 重入：流水线执行完成后我们主动调用 app.quit()，不再被拦截 */
 let isQuitting = false;
 
 app.on('before-quit', (event) => {
+  // 停止定时任务调度器
+  taskScheduler.stop();
+
   if (isQuitting || !activeConversationId) return;
 
   // ── 快速判断是否真的有需要处理的内容 ──────────────────────

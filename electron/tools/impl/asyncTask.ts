@@ -1,0 +1,165 @@
+/**
+ * async_task — 异步后台任务工具
+ *
+ * 让 AI 能够创建/查询/取消后台异步任务。
+ * 创建的任务会在后台由子智能体执行，不阻塞当前对话。
+ *
+ * 场景示例：
+ *   - 用户："去读这100份简历，告诉我专业和年龄分布"
+ *     AI 调用 async_task create → 后台子智能体处理 → 完成后通知用户
+ *   - 用户："简历分析完了吗？"
+ *     AI 调用 async_task status → 返回进度/结果
+ */
+
+import type { ToolDefinition } from '../types';
+import { taskManager } from '../../taskManager';
+import type { TaskStatus } from '../../db';
+
+interface AsyncTaskParams {
+  action: 'create' | 'status' | 'list' | 'cancel' | 'result';
+  title?: string;
+  prompt?: string;
+  toolsets?: string[];
+  max_rounds?: number;
+  task_id?: string;
+  status_filter?: TaskStatus;
+}
+
+function formatTask(task: { id: string; title: string; status: string; progress: number; progress_text: string | null; created_at: number; completed_at: number | null; result: string | null; error: string | null }): string {
+  const statusMap: Record<string, string> = {
+    pending: '⏳ 等待中',
+    running: '🔄 执行中',
+    completed: '✅ 已完成',
+    failed: '❌ 失败',
+    cancelled: '🚫 已取消',
+  };
+  const statusText = statusMap[task.status] ?? task.status;
+  const progress = task.status === 'running' ? ` (${Math.round(task.progress * 100)}%)` : '';
+  const progressDetail = task.progress_text ? ` — ${task.progress_text}` : '';
+  const created = new Date(task.created_at).toLocaleString('zh-CN');
+  const completed = task.completed_at ? new Date(task.completed_at).toLocaleString('zh-CN') : '';
+
+  let info = `📋 ${task.title}\n   ID: ${task.id}\n   状态: ${statusText}${progress}${progressDetail}\n   创建: ${created}`;
+  if (completed) info += `\n   完成: ${completed}`;
+  if (task.error) info += `\n   错误: ${task.error}`;
+  return info;
+}
+
+const asyncTaskTool: ToolDefinition<AsyncTaskParams> = {
+  schema: {
+    type: 'function',
+    function: {
+      name: 'async_task',
+      description:
+        '创建/查询/取消异步后台任务。创建的任务由后台子智能体执行，不阻塞当前对话。\n' +
+        '适用场景：耗时操作（批量文件处理、大量网页抓取、复杂分析等）。\n' +
+        '创建后立即返回 task_id，用户可随时用 status 查询进度，完成后自动通知。',
+      parameters: {
+        type: 'object',
+        properties: {
+          action: {
+            type: 'string',
+            description: '操作类型：create=创建并启动 | status=查询单个任务状态 | list=列出所有任务 | cancel=取消任务 | result=获取完成任务的结果',
+            enum: ['create', 'status', 'list', 'cancel', 'result'],
+          },
+          title: {
+            type: 'string',
+            description: '【create 必填】任务标题（简短描述，如"简历分析"）',
+          },
+          prompt: {
+            type: 'string',
+            description: '【create 必填】自包含的任务指令。子智能体只能看到这段指令，看不到当前对话历史，所以必须包含完成任务所需的全部信息（文件路径、操作步骤、输出要求等）',
+          },
+          toolsets: {
+            type: 'array',
+            description: '【create 可选】子智能体可用的工具集（默认 ["agent"]）。需要文件操作/代码执行时用 ["agent-debug"]',
+            items: { type: 'string' },
+          },
+          max_rounds: {
+            type: 'integer',
+            description: '【create 可选】最大工具调用轮数（默认 15，上限 50）',
+          },
+          task_id: {
+            type: 'string',
+            description: '【status/cancel/result 必填】任务 ID',
+          },
+          status_filter: {
+            type: 'string',
+            description: '【list 可选】按状态过滤：pending/running/completed/failed/cancelled',
+            enum: ['pending', 'running', 'completed', 'failed', 'cancelled'],
+          },
+        },
+        required: ['action'],
+      },
+    },
+  },
+
+  execute(params, context) {
+    const { action } = params;
+
+    switch (action) {
+      case 'create': {
+        if (!params.title?.trim()) return '❌ 缺少 title 参数';
+        if (!params.prompt?.trim()) return '❌ 缺少 prompt 参数（子智能体需要自包含的完整指令）';
+
+        const task = taskManager.createAndStart({
+          title: params.title.trim(),
+          prompt: params.prompt.trim(),
+          conversationId: context?.conversationId,
+          type: 'background',
+          metadata: {
+            toolsets: params.toolsets,
+            maxRounds: params.max_rounds,
+          },
+        });
+
+        return `✅ 后台任务已创建并启动\n\n` +
+          `📋 ${task.title}\n` +
+          `🆔 ${task.id}\n\n` +
+          `任务正在后台执行，完成后会自动通知用户。\n` +
+          `你可以用 async_task status 查询进度。`;
+      }
+
+      case 'status': {
+        if (!params.task_id) return '❌ 缺少 task_id 参数';
+        const task = taskManager.getTask(params.task_id);
+        if (!task) return `❌ 未找到任务: ${params.task_id}`;
+        return formatTask(task);
+      }
+
+      case 'list': {
+        const tasks = taskManager.listTasks({
+          status: params.status_filter,
+          conversationId: context?.conversationId,
+        });
+        if (tasks.length === 0) return '📭 当前没有任务';
+        const header = `共 ${tasks.length} 个任务：\n\n`;
+        return header + tasks.map(formatTask).join('\n\n');
+      }
+
+      case 'cancel': {
+        if (!params.task_id) return '❌ 缺少 task_id 参数';
+        const ok = taskManager.cancelTask(params.task_id);
+        return ok ? `✅ 已取消任务: ${params.task_id}` : `❌ 无法取消（任务不存在或已结束）`;
+      }
+
+      case 'result': {
+        if (!params.task_id) return '❌ 缺少 task_id 参数';
+        const task = taskManager.getTask(params.task_id);
+        if (!task) return `❌ 未找到任务: ${params.task_id}`;
+        if (task.status === 'completed' && task.result) {
+          return `✅ 任务「${task.title}」已完成\n\n--- 结果 ---\n${task.result}`;
+        }
+        if (task.status === 'failed') {
+          return `❌ 任务「${task.title}」失败: ${task.error ?? '未知错误'}`;
+        }
+        return `⏳ 任务「${task.title}」尚未完成（当前状态: ${task.status}，进度: ${Math.round(task.progress * 100)}%）`;
+      }
+
+      default:
+        return `❌ 未知操作: ${action}`;
+    }
+  },
+};
+
+export default asyncTaskTool;

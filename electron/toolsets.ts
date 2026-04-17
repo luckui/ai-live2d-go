@@ -166,6 +166,10 @@ export const TOOLSETS: Record<string, ToolsetDefinition> = {
       // "check_python_env",        // Skill: 检查 Python 环境
       "manage_tts",              // 🆕 管理本地 TTS 语音合成服务
       
+      // 异步任务
+      "async_task",              // 🆕 异步后台任务管理
+      "schedule_task",           // 🆕 定时任务调度
+      
       // OCR 工具
       // "sys_find_text",           // OCR 查找文字
       // "sys_find_text_click",     // OCR 查找并点击
@@ -225,6 +229,10 @@ export const TOOLSETS: Record<string, ToolsetDefinition> = {
       // "open_terminal",
       // "check_python_env",
       "manage_tts",              // 🆕 管理本地 TTS 语音合成服务
+      
+      // 异步任务
+      "async_task",              // 🆕 异步后台任务管理
+      "schedule_task",           // 🆕 定时任务调度
       
       // OCR 工具
       // "sys_find_text",

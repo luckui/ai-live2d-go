@@ -83,6 +83,52 @@ export function initDatabase(): void {
 
     CREATE INDEX IF NOT EXISTS idx_memory_conv
       ON memory_fragments(conversation_id, created_at);
+
+    -- ── 异步任务管理 ──────────────────────────────────────
+    CREATE TABLE IF NOT EXISTS tasks (
+      id              TEXT    PRIMARY KEY,
+      conversation_id TEXT,
+      type            TEXT    NOT NULL DEFAULT 'background',
+      status          TEXT    NOT NULL DEFAULT 'pending',
+      title           TEXT    NOT NULL,
+      prompt          TEXT    NOT NULL,
+      context         TEXT,
+      result          TEXT,
+      error           TEXT,
+      progress        REAL    DEFAULT 0,
+      progress_text   TEXT,
+      created_at      INTEGER NOT NULL,
+      started_at      INTEGER,
+      completed_at    INTEGER,
+      parent_task_id  TEXT,
+      metadata        TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_tasks_status
+      ON tasks(status);
+    CREATE INDEX IF NOT EXISTS idx_tasks_parent
+      ON tasks(parent_task_id);
+
+    -- ── 定时调度 ──────────────────────────────────────────
+    CREATE TABLE IF NOT EXISTS schedules (
+      id            TEXT    PRIMARY KEY,
+      task_title    TEXT    NOT NULL,
+      prompt        TEXT    NOT NULL,
+      schedule_type TEXT    NOT NULL,
+      cron_expr     TEXT,
+      interval_ms   INTEGER,
+      run_at        INTEGER,
+      enabled       INTEGER NOT NULL DEFAULT 1,
+      last_run_at   INTEGER,
+      next_run_at   INTEGER,
+      repeat_limit  INTEGER,
+      repeat_count  INTEGER NOT NULL DEFAULT 0,
+      created_at    INTEGER NOT NULL,
+      metadata      TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_schedules_enabled
+      ON schedules(enabled, next_run_at);
   `);
 }
 
@@ -442,4 +488,152 @@ export function getGlobalMemoryCursor(conversationId: string): number {
 /** 更新全局记忆游标 */
 export function setGlobalMemoryCursor(conversationId: string, n: number): void {
   setSetting(`global_mem_cursor_${conversationId}`, String(n));
+}
+
+// ── 异步任务 CRUD ─────────────────────────────────────────
+
+export type TaskStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
+export type TaskType = 'background' | 'delegate' | 'batch' | 'cron' | 'manual';
+
+export interface DBTask {
+  id: string;
+  conversation_id: string | null;
+  type: TaskType;
+  status: TaskStatus;
+  title: string;
+  prompt: string;
+  context: string | null;       // JSON
+  result: string | null;
+  error: string | null;
+  progress: number;             // 0.0 ~ 1.0
+  progress_text: string | null;
+  created_at: number;
+  started_at: number | null;
+  completed_at: number | null;
+  parent_task_id: string | null;
+  metadata: string | null;      // JSON
+}
+
+export function createTask(task: Omit<DBTask, 'id' | 'created_at' | 'started_at' | 'completed_at' | 'result' | 'error' | 'progress' | 'progress_text'>): DBTask {
+  const full: DBTask = {
+    ...task,
+    id: randomUUID(),
+    result: null,
+    error: null,
+    progress: 0,
+    progress_text: null,
+    created_at: Date.now(),
+    started_at: null,
+    completed_at: null,
+  };
+  db.prepare(`
+    INSERT INTO tasks (id, conversation_id, type, status, title, prompt, context, result, error, progress, progress_text, created_at, started_at, completed_at, parent_task_id, metadata)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    full.id, full.conversation_id, full.type, full.status, full.title, full.prompt,
+    full.context, full.result, full.error, full.progress, full.progress_text,
+    full.created_at, full.started_at, full.completed_at, full.parent_task_id, full.metadata
+  );
+  return full;
+}
+
+export function getTask(taskId: string): DBTask | null {
+  return (db.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId) as DBTask) ?? null;
+}
+
+export function listTasks(filter?: { status?: TaskStatus; conversationId?: string; parentTaskId?: string }): DBTask[] {
+  let sql = 'SELECT * FROM tasks WHERE 1=1';
+  const params: unknown[] = [];
+  if (filter?.status) { sql += ' AND status = ?'; params.push(filter.status); }
+  if (filter?.conversationId) { sql += ' AND conversation_id = ?'; params.push(filter.conversationId); }
+  if (filter?.parentTaskId) { sql += ' AND parent_task_id = ?'; params.push(filter.parentTaskId); }
+  sql += ' ORDER BY created_at DESC';
+  return db.prepare(sql).all(...params) as DBTask[];
+}
+
+export function updateTask(taskId: string, updates: Partial<Pick<DBTask, 'status' | 'result' | 'error' | 'progress' | 'progress_text' | 'started_at' | 'completed_at'>>): void {
+  const sets: string[] = [];
+  const params: unknown[] = [];
+  for (const [key, val] of Object.entries(updates)) {
+    if (val !== undefined) { sets.push(`${key} = ?`); params.push(val); }
+  }
+  if (sets.length === 0) return;
+  params.push(taskId);
+  db.prepare(`UPDATE tasks SET ${sets.join(', ')} WHERE id = ?`).run(...params);
+}
+
+export function deleteTask(taskId: string): void {
+  db.prepare('DELETE FROM tasks WHERE id = ?').run(taskId);
+}
+
+// ── 定时调度 CRUD ─────────────────────────────────────────
+
+export type ScheduleType = 'once' | 'interval' | 'cron';
+
+export interface DBSchedule {
+  id: string;
+  task_title: string;
+  prompt: string;
+  schedule_type: ScheduleType;
+  cron_expr: string | null;
+  interval_ms: number | null;
+  run_at: number | null;          // 一次性执行时间戳
+  enabled: number;                // 0 | 1
+  last_run_at: number | null;
+  next_run_at: number | null;
+  repeat_limit: number | null;    // null = 无限
+  repeat_count: number;
+  created_at: number;
+  metadata: string | null;        // JSON
+}
+
+export function createSchedule(sched: Omit<DBSchedule, 'id' | 'created_at' | 'last_run_at' | 'repeat_count'>): DBSchedule {
+  const full: DBSchedule = {
+    ...sched,
+    id: randomUUID(),
+    last_run_at: null,
+    repeat_count: 0,
+    created_at: Date.now(),
+  };
+  db.prepare(`
+    INSERT INTO schedules (id, task_title, prompt, schedule_type, cron_expr, interval_ms, run_at, enabled, last_run_at, next_run_at, repeat_limit, repeat_count, created_at, metadata)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    full.id, full.task_title, full.prompt, full.schedule_type, full.cron_expr,
+    full.interval_ms, full.run_at, full.enabled, full.last_run_at, full.next_run_at,
+    full.repeat_limit, full.repeat_count, full.created_at, full.metadata
+  );
+  return full;
+}
+
+export function getSchedule(scheduleId: string): DBSchedule | null {
+  return (db.prepare('SELECT * FROM schedules WHERE id = ?').get(scheduleId) as DBSchedule) ?? null;
+}
+
+export function listSchedules(enabledOnly = true): DBSchedule[] {
+  if (enabledOnly) {
+    return db.prepare('SELECT * FROM schedules WHERE enabled = 1 ORDER BY created_at DESC').all() as DBSchedule[];
+  }
+  return db.prepare('SELECT * FROM schedules ORDER BY created_at DESC').all() as DBSchedule[];
+}
+
+export function updateSchedule(scheduleId: string, updates: Partial<Omit<DBSchedule, 'id' | 'created_at'>>): void {
+  const sets: string[] = [];
+  const params: unknown[] = [];
+  for (const [key, val] of Object.entries(updates)) {
+    if (val !== undefined) { sets.push(`${key} = ?`); params.push(val); }
+  }
+  if (sets.length === 0) return;
+  params.push(scheduleId);
+  db.prepare(`UPDATE schedules SET ${sets.join(', ')} WHERE id = ?`).run(...params);
+}
+
+export function deleteSchedule(scheduleId: string): void {
+  db.prepare('DELETE FROM schedules WHERE id = ?').run(scheduleId);
+}
+
+export function getDueSchedules(now: number): DBSchedule[] {
+  return db.prepare(
+    'SELECT * FROM schedules WHERE enabled = 1 AND next_run_at IS NOT NULL AND next_run_at <= ?'
+  ).all(now) as DBSchedule[];
 }

@@ -61,6 +61,8 @@ import writeFileTool from './impl/writeFile';
 import discordSendFileTool from './impl/discordSendFile';
 import wechatSendFileTool from './impl/wechatSendFile';
 import manageTTSTool from './impl/manageTTS';
+import asyncTaskTool from './impl/asyncTask';
+import scheduleTaskTool from './impl/scheduleTask';
 
 import { setToolRegistry } from './toolContext';
 
@@ -110,7 +112,9 @@ const registry = new ToolRegistry()
   .register(writeFileTool)
   .register(discordSendFileTool)
   .register(wechatSendFileTool)
-  .register(manageTTSTool);
+  .register(manageTTSTool)
+  .register(asyncTaskTool)
+  .register(scheduleTaskTool);
 
 // 批量注册所有浏览器工具
 for (const tool of browserTools) {
