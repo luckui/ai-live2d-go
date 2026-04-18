@@ -47,7 +47,40 @@ async function execute(params: ReadFileParams): Promise<string> {
     ];
     const ext = path.extname(resolvedPath).toLowerCase();
     if (binaryExtensions.includes(ext)) {
-      return `❌ 无法读取二进制文件: ${file_path} (${ext})\n提示：使用 take_screenshot 工具查看图片。`;
+      // 按类型给出不同的引导提示
+      const docExtensions = ['.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx'];
+      const imgExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp'];
+
+      let hint: string;
+      if (docExtensions.includes(ext)) {
+        // 根据扩展名给出一步到位的 python -c 命令
+        const escapedPath = file_path.replace(/\\/g, '\\\\');
+        let pySnippet = '';
+        if (ext === '.docx' || ext === '.doc') {
+          pySnippet = `from docx import Document; print('\\n'.join(p.text for p in Document(r'${escapedPath}').paragraphs))`;
+        } else if (ext === '.pdf') {
+          pySnippet = `import pymupdf; doc=pymupdf.open(r'${escapedPath}'); [print(p.get_text()) for p in doc]`;
+        } else if (ext === '.xlsx' || ext === '.xls') {
+          pySnippet = `from openpyxl import load_workbook; wb=load_workbook(r'${escapedPath}',data_only=True); [print('\\t'.join(str(c) if c else '' for c in row)) for ws in wb for row in ws.iter_rows(values_only=True)]`;
+        } else {
+          pySnippet = `from pptx import Presentation; prs=Presentation(r'${escapedPath}'); [print(s.text) for sl in prs.slides for s in sl.shapes if s.has_text_frame]`;
+        }
+        hint = [
+          `❌ 无法直接读取文档文件: ${file_path} (${ext})`,
+          '',
+          '💡 一步提取（直接复制执行，run_command 会返回 stdout）：',
+          `   run_command({ command: "python -c \\"${pySnippet}\\"" })`,
+          '',
+          '   ⚠️ 脚本必须 print()！run_command 直接返回输出，无需写临时文件再读取。',
+          '   ⚠️ 首次需安装依赖：run_command({ command: "pip install python-docx pymupdf openpyxl python-pptx" })',
+          '   📖 更多格式详见 read_manual("文档读取")',
+        ].join('\n');
+      } else if (imgExtensions.includes(ext)) {
+        hint = `❌ 无法读取图片文件: ${file_path} (${ext})\n提示：使用 take_screenshot 工具查看图片。`;
+      } else {
+        hint = `❌ 无法读取二进制文件: ${file_path} (${ext})`;
+      }
+      return hint;
     }
 
     // 读取文件内容

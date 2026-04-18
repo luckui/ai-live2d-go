@@ -125,7 +125,7 @@ export const TOOLSETS: Record<string, ToolsetDefinition> = {
     tools: [
       // 核心能力
       "memory",                  // 全局核心记忆（AI 主动管理用户画像）
-      "todo",                    // 任务管理（会话级任务追踪）
+      // "todo",                    // 任务管理（会话级任务追踪）
       "run_command",             // ⭐ 核心：执行命令
       "show_available_tools",    // 🆕 显示可用工具列表
       "switch_agent_mode",       // 🆕 切换 Agent 模式
@@ -146,7 +146,8 @@ export const TOOLSETS: Record<string, ToolsetDefinition> = {
       "todo",                    // 任务管理
       "read_manual",             // 读取操作手册
       "manual_manage",           // 编辑说明书（Agent 权限）
-      "run_command",             // ⭐ 执行命令
+      "run_command",             // ⭐ 执行命令（含 background 后台模式）
+      "process",                 // ⭐ 后台进程管理（poll/kill/send，配合 run_command background）
       "show_available_tools",    // 显示可用工具列表
       "switch_agent_mode",       // 🆕 切换 Agent 模式
       
@@ -199,15 +200,8 @@ export const TOOLSETS: Record<string, ToolsetDefinition> = {
       "search_files",            // 搜索文件内容
       "write_file",              // 写入文件（覆盖/追加），skills
       
-      // 🆕 打工人核心工具（代码执行）
-      "execute_python",          // 执行 Python 代码
-      "execute_node",            // 执行 Node.js/TypeScript 代码
-      
-      // 🆕 终端管理工具
-      "start_terminal",          // 启动持久化终端会话
-      "get_terminal_output",     // 获取终端输出
-      "send_to_terminal",        // 发送终端输入
-      "kill_terminal",           // 终止终端会话
+      // 🆕 后台进程管理（run_command background=true 启动，process 管理）
+      "process",                 // poll/log/kill/send/list
       
       // 🆕 打工人核心工具（Git 操作）
       "git_status",              // Git 状态
@@ -249,6 +243,27 @@ export const TOOLSETS: Record<string, ToolsetDefinition> = {
       // "calculate",
       // "get_current_datetime",
       "take_screenshot",
+    ],
+  },
+
+  // ═════════════════════════════════════════════════════════════
+  // Worker 模式：batch 子任务专用精简工具集
+  // ═════════════════════════════════════════════════════════════
+
+  "worker": {
+    description: "Worker 模式 - 批量子任务的精简工具集（参考 Hermes delegate_task 默认 terminal+file+web）",
+    tools: [
+      // 文件操作（核心：子任务需要读写文件、发现文件）
+      "read_file",               // 读取文本文件
+      "write_file",              // 写入结果文件
+      "list_directory",          // 列出目录内容
+      "search_files",            // 搜索文件
+
+      // 执行（子任务需要跑 Python 解析文档、处理数据）
+      "run_command",             // 通用命令执行（pip install、python script.py 等）
+
+      // 知识库（子任务遇到不会的操作可查手册，如文档读取方法）
+      "read_manual",             // 读取操作说明书
     ],
   },
 

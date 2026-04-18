@@ -35,15 +35,8 @@ import editFileTool from './impl/editFile';
 import listDirectoryTool from './impl/listDirectory';
 import searchFilesTool from './impl/searchFiles';
 
-// 🆕 打工人核心工具（代码执行）
-import executePythonTool from './impl/executePython';
-import executeNodeTool from './impl/executeNode';
-
-// 🆕 终端管理工具
-import startTerminalTool from './impl/startTerminal';
-import getTerminalOutputTool from './impl/getTerminalOutput';
-import sendToTerminalTool from './impl/sendToTerminal';
-import killTerminalTool from './impl/killTerminal';
+// 🆕 后台进程管理工具
+import processTool from './impl/process';
 
 // 🆕 打工人核心工具（Git 操作）
 import gitStatusTool from './impl/gitStatus';
@@ -87,15 +80,8 @@ const registry = new ToolRegistry()
   .register(listDirectoryTool)
   .register(searchFilesTool)
   
-  // 🆕 注册打工人核心工具（代码执行）
-  .register(executePythonTool)
-  .register(executeNodeTool)
-  
-  // 🆕 注册终端管理工具
-  .register(startTerminalTool)
-  .register(getTerminalOutputTool)
-  .register(sendToTerminalTool)
-  .register(killTerminalTool)
+  // 🆕 注册后台进程管理工具
+  .register(processTool)
   
   // 🆕 注册打工人核心工具（Git 操作）
   .register(gitStatusTool)

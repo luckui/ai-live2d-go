@@ -6,7 +6,7 @@
  *
  * 场景示例：
  *   - 用户："去读这100份简历，告诉我专业和年龄分布"
- *     AI 调用 async_task create → 后台子智能体处理 → 完成后通知用户
+ *     AI 调用 async_task batch → 后台并行处理 → 完成后通知用户
  *   - 用户："简历分析完了吗？"
  *     AI 调用 async_task status → 返回进度/结果
  */
@@ -16,13 +16,16 @@ import { taskManager } from '../../taskManager';
 import type { TaskStatus } from '../../db';
 
 interface AsyncTaskParams {
-  action: 'create' | 'status' | 'list' | 'cancel' | 'result';
+  action: 'create' | 'batch' | 'status' | 'list' | 'cancel' | 'result';
   title?: string;
   prompt?: string;
   toolsets?: string[];
   max_rounds?: number;
   task_id?: string;
   status_filter?: TaskStatus;
+  // batch 专用
+  prompt_template?: string;
+  items?: string[];
 }
 
 function formatTask(task: { id: string; title: string; status: string; progress: number; progress_text: string | null; created_at: number; completed_at: number | null; result: string | null; error: string | null }): string {
@@ -53,14 +56,18 @@ const asyncTaskTool: ToolDefinition<AsyncTaskParams> = {
       description:
         '创建/查询/取消异步后台任务。创建的任务由后台子智能体执行，不阻塞当前对话。\n' +
         '适用场景：耗时操作（批量文件处理、大量网页抓取、复杂分析等）。\n' +
-        '创建后立即返回 task_id，用户可随时用 status 查询进度，完成后自动通知。',
+        '创建后立即返回 task_id，用户可随时用 status 查询进度，完成后自动通知。\n\n' +
+        '【batch 批量模式】\n' +
+        '用于对一批数据项执行相同操作。提供 prompt_template（含 {{item}} 占位符）和 items 数组，\n' +
+        '系统会为每个 item 创建独立子任务并行执行，最终聚合结果。\n' +
+        '示例：分析100份简历 → prompt_template="读取简历文件 {{item}}，提取姓名、专业、年龄", items=["简历1.pdf","简历2.pdf",...]',
       parameters: {
         type: 'object',
         properties: {
           action: {
             type: 'string',
-            description: '操作类型：create=创建并启动 | status=查询单个任务状态 | list=列出所有任务 | cancel=取消任务 | result=获取完成任务的结果',
-            enum: ['create', 'status', 'list', 'cancel', 'result'],
+            description: '操作类型：create=创建单个任务 | batch=批量任务（并行处理多项） | status=查询状态 | list=列出所有 | cancel=取消 | result=获取结果',
+            enum: ['create', 'batch', 'status', 'list', 'cancel', 'result'],
           },
           title: {
             type: 'string',
@@ -87,6 +94,15 @@ const asyncTaskTool: ToolDefinition<AsyncTaskParams> = {
             type: 'string',
             description: '【list 可选】按状态过滤：pending/running/completed/failed/cancelled',
             enum: ['pending', 'running', 'completed', 'failed', 'cancelled'],
+          },
+          prompt_template: {
+            type: 'string',
+            description: '【batch 必填】含 {{item}} 占位符的指令模板。每个 item 会替换 {{item}} 后作为独立子任务执行。\n示例："读取文件 {{item}}，提取关键信息并输出JSON格式摘要"',
+          },
+          items: {
+            type: 'array',
+            description: '【batch 必填】待处理的数据项列表。每个元素会替换 prompt_template 中的 {{item}}',
+            items: { type: 'string' },
           },
         },
         required: ['action'],
@@ -118,6 +134,37 @@ const asyncTaskTool: ToolDefinition<AsyncTaskParams> = {
           `🆔 ${task.id}\n\n` +
           `任务正在后台执行，完成后会自动通知用户。\n` +
           `你可以用 async_task status 查询进度。`;
+      }
+
+      case 'batch': {
+        if (!params.title?.trim()) return '❌ 缺少 title 参数';
+        if (!params.prompt_template?.trim()) return '❌ 缺少 prompt_template 参数（含 {{item}} 占位符的指令模板）';
+        if (!params.items || !Array.isArray(params.items) || params.items.length === 0) {
+          return '❌ 缺少 items 参数（待处理的数据项列表）';
+        }
+        if (!params.prompt_template.includes('{{item}}')) {
+          return '❌ prompt_template 必须包含 {{item}} 占位符';
+        }
+
+        const batchTask = taskManager.createAndStart({
+          title: params.title.trim(),
+          prompt: `批量任务：对 ${params.items.length} 个数据项执行操作`,
+          conversationId: context?.conversationId,
+          type: 'batch',
+          metadata: {
+            promptTemplate: params.prompt_template.trim(),
+            items: params.items,
+            toolsets: params.toolsets ?? ['worker'],
+            maxRounds: params.max_rounds ?? 10,
+          },
+        });
+
+        return `✅ 批量任务已创建\n\n` +
+          `📋 ${batchTask.title}\n` +
+          `🆔 ${batchTask.id}\n` +
+          `📊 共 ${params.items.length} 项，将并行处理\n\n` +
+          `子任务会自动创建并排队执行（并发上限 3）。\n` +
+          `用 async_task status task_id="${batchTask.id}" 查询整体进度。`;
       }
 
       case 'status': {

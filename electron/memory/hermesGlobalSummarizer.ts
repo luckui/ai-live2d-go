@@ -265,22 +265,54 @@ export async function refineStructuredGlobalMemory(
     ...buildProviderExtraBody(provider),
   });
 
-  let response: Response;
-  try {
-    response = await fetch(reqUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${provider.apiKey}`,
-      },
-      body: reqBody,signal: AbortSignal.timeout(30000), // 30 秒超时
-    });
+  // ── 带重试的请求（参考旧 globalSummarizer 的 3 次退避策略） ──
+  const RETRYABLE_STATUS = new Set([429, 502, 503, 504]);
+  const MAX_ATTEMPTS = 3;
+  const TIMEOUT_MS = 60_000; // 60 秒超时（推理模型需要更久）
 
-    if (!response.ok) {
+  let response: Response | null = null;
+  let lastErr: unknown = null;
+
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      response = await fetch(reqUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${provider.apiKey}`,
+        },
+        body: reqBody,
+        signal: AbortSignal.timeout(TIMEOUT_MS),
+      });
+
+      if (response.ok) break; // 成功，跳出重试
+
+      // 可重试的 HTTP 状态码
+      if (RETRYABLE_STATUS.has(response.status) && attempt < MAX_ATTEMPTS) {
+        const waitMs = attempt * 1000;
+        console.warn(`[HermesMemory] 精炼请求 HTTP ${response.status}，${waitMs}ms 后重试（${attempt}/${MAX_ATTEMPTS}）`);
+        await new Promise((r) => setTimeout(r, waitMs));
+        response = null;
+        continue;
+      }
+
       throw new Error(`HTTP ${response.status}: ${await response.text()}`);
+    } catch (e) {
+      lastErr = e;
+      if (attempt < MAX_ATTEMPTS) {
+        const waitMs = attempt * 1000;
+        console.warn(`[HermesMemory] 精炼请求异常，${waitMs}ms 后重试（${attempt}/${MAX_ATTEMPTS}）: ${(e as Error).message}`);
+        await new Promise((r) => setTimeout(r, waitMs));
+        response = null;
+        continue;
+      }
     }
-  } catch (e) {
-    throw new Error(`结构化记忆精炼请求失败: ${(e as Error).message}`);
+  }
+
+  if (!response?.ok) {
+    throw (lastErr instanceof Error
+      ? lastErr
+      : new Error('结构化记忆精炼请求失败（无可用响应）'));
   }
 
   const data = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> };

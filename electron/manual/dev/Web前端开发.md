@@ -150,24 +150,25 @@ browser_open(url="file:///C:/Users/用户名/Desktop/项目/index.html")
 
 启动方式：
 
-### 方式 1：用 start_terminal 工具（推荐）
+### 方式 1：用 run_command 后台模式（推荐）
 
 **⚠️ 完整流程（5 步，缺一不可）：**
 
 ```javascript
-// 步骤 1：启动终端会话
-start_terminal({ 
+// 步骤 1：后台启动开发服务器
+run_command({ 
   command: "npm run dev", 
   cwd: "C:\\Users\\PC\\Desktop\\aimap",
-  env: {"CI": "true"}
+  env: {"CI": "true"},
+  background: true
 })
-// 返回：{ id: "uuid-xxx", output: "..." }
+// 返回：session_id: "uuid-xxx"
 
 // 步骤 2：等待 3-5 秒（给服务器启动时间）
 // 不要用 run_command 等待，直接在下一个工具调用前自然等待
 
-// 步骤 3：获取累积输出，查找服务器地址
-get_terminal_output({ id: "uuid-xxx" })
+// 步骤 3：检查服务器输出，查找启动地址
+process({ action: "poll", session_id: "uuid-xxx" })
 // 查找输出中的 "Local: http://localhost:5173" 或 "Server running at"
 
 // 步骤 4：用浏览器打开服务器地址
@@ -178,22 +179,24 @@ browser_screenshot()  // 截图确认页面渲染
 browser_read_page()   // 检查是否有控制台错误（ES Module、CORS 等）
 
 // 完成后汇报：服务器已启动，页面正常/有错误
+// 关停服务器：process({ action: "kill", session_id: "uuid-xxx" })
 ```
 
 **Python HTTP 服务器示例：**
 
 ```javascript
-start_terminal({ 
+run_command({ 
   command: "python -m http.server 8080", 
-  cwd: "C:\\Users\\PC\\Desktop\\aimap"
+  cwd: "C:\\Users\\PC\\Desktop\\aimap",
+  background: true
 })
 // 同样必须完成上述 5 步流程
 ```
 
 > ❌ **常见错误模式（禁止）**：
-> - `start_terminal` → 等待 2 秒 → 汇报"启动成功" ← 你没验证！
-> - `start_terminal` → 忘记 `get_terminal_output` ← 不知道服务器状态
-> - `start_terminal` → 忘记 `browser` 验证 ← 不知道页面能否访问
+> - `run_command(background=true)` → 等待 2 秒 → 汇报"启动成功" ← 你没验证！
+> - 忘记 `process(action="poll")` ← 不知道服务器状态
+> - 忘记 `browser` 验证 ← 不知道页面能否访问
 > - 跳过 todo 计划中的后续步骤 ← todo 不是装饰品！
 >
 > ✅ **正确模式**：
@@ -205,8 +208,9 @@ start_terminal({
 
 告诉用户打开终端，进入项目目录，执行 `npm run dev` 或 `python -m http.server`。
 
-> ❌ **禁止用 run_command 启动开发服务器**  
-> run_command 会检测到常驻进程并拒绝执行，使用 start_terminal 代替。
+> ⚠️ **启动开发服务器必须用 background=true**  
+> 不带 background 的 run_command 会检测到长驻进程并拒绝执行。
+> 正确做法：`run_command({ command: "npm run dev", cwd: "...", background: true })`
 
 ---
 

@@ -49,19 +49,19 @@ const WORKFLOW_ENFORCEMENT = `
 ③ 加载后严格遵循其中的步骤，不得跳过或简化
 
 【终端工具使用强制流程】
-⚠️ 当你调用 start_terminal 后，后续操作是强制性的，不是可选建议：
+⚠️ 启动开发服务器等长驻进程时，必须用 run_command background=true，后续操作是强制性的：
 
-1️⃣ start_terminal → 启动进程，返回 { id, output }
+1️⃣ run_command({ command: "npm run dev", cwd: "...", background: true }) → 返回 session_id
 2️⃣ **等待 3-5 秒** → 给服务器足够启动时间
-3️⃣ get_terminal_output({ id }) → 检查累积输出，查找启动标志
+3️⃣ process({ action: "poll", session_id }) → 检查累积输出，查找启动标志
 4️⃣ browser_open → 打开服务器地址（如 http://localhost:5173）
 5️⃣ browser_screenshot + browser_read_page → 验证页面正常 + 检查控制台错误
 
 ❌ 禁止的错误模式：
-  • start_terminal → 等待 2 秒 → 直接汇报"启动成功" ← 你没验证！
-  • start_terminal → 忘记 get_terminal_output → 不知道服务器是否真的启动
-  • start_terminal → 忘记 browser 验证 → 不知道页面能否访问
-  • start_terminal → 跳过 todo 计划中的后续步骤 ← todo 不是摆设！
+  • run_command(background=true) → 等待 2 秒 → 直接汇报"启动成功" ← 你没验证！
+  • 忘记 process(action="poll") → 不知道服务器是否真的启动
+  • 忘记 browser 验证 → 不知道页面能否访问
+  • 跳过 todo 计划中的后续步骤 ← todo 不是摆设！
 
 💡 记住：你的 todo 计划不是写给用户看的装饰品，是你自己的执行清单！
 创建 todo 后必须逐项执行，每完成一项立即标记 completed。
@@ -117,7 +117,7 @@ const VISIBILITY_RULES = `
 const DEVELOPER_TOOL_MAPPING = `
 【工具清单 — Developer 模式】
 • 文件操作：read_file | edit_file | write_file | list_directory | search_files
-• 终端执行：run_command | start_terminal | get_terminal_output | send_to_terminal | kill_terminal | execute_python | execute_node
+• 终端执行：run_command（同步 + background 后台模式） | process（poll/log/kill/send/list）
 • Git 操作：git_status | git_diff | git_commit | git_log
 • 浏览器：browser_open | browser_read_page | browser_screenshot | browser_click_smart | browser_type_smart
 • 记忆管理：memory（读取/搜索/添加/更新）

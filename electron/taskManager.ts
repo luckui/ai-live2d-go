@@ -150,6 +150,12 @@ class TaskManager extends EventEmitter {
         // 说明书生成：单次 LLM 调用 + 文件写入
         const { executeManualTask } = await import('./manual/manualGenerator');
         result = await executeManualTask(task);
+      } else if (task.type === 'batch') {
+        // 批量任务：拆分 → 并行子任务 → 聚合结果
+        const { runBatch } = await import('./batchRunner');
+        result = await runBatch(task, abort.signal, (progress, text) => {
+          this.updateProgress(task.id, progress, text);
+        });
       } else {
         // 通用子智能体：多轮 ReAct 循环
         const { runChildAgent } = await import('./agentRunner');

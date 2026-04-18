@@ -369,7 +369,7 @@ export async function readPageSummary(mode: 'brief' | 'full' = 'brief'): Promise
     out += '\n  1. 检查 import 语句是否正确（包名、导出名）';
     out += '\n  2. 清理依赖缓存：删除 node_modules/.vite 和 dist';
     out += '\n  3. 验证 package.json 中的依赖版本';
-    out += '\n  4. 如果是 CORS，需要用 start_terminal 启动开发服务器';
+    out += '\n  4. 如果是 CORS，需要用 run_command(background=true) 启动开发服务器';
   }
 
   return out;
