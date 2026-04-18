@@ -1,5 +1,5 @@
 ﻿<p align="center">
-  <img src="https://readme-typing-svg.demolab.com?font=Fira+Code&weight=600&size=28&duration=3000&pause=1000&color=FF6B9D&center=true&vCenter=true&multiline=true&repeat=false&width=500&height=80&lines=%F0%9F%8C%B8+Hiyori;Live2D+%C3%97+AI+Agent+Desktop+Companion" alt="Hiyori" />
+  <img src="https://readme-typing-svg.demolab.com?font=Fira+Code&weight=600&size=28&duration=3000&pause=1000&color=FF6B9D&center=true&vCenter=true&multiline=true&repeat=false&width=700&height=80&lines=%F0%9F%8C%B8+Hiyori;Live2D+%C3%97+AI+Agent+Desktop+Companion" alt="Hiyori" />
 </p>
 
 <p align="center">
@@ -358,83 +358,3 @@ Register in `electron/tools/index.ts`, add to a toolset in `electron/toolsets.ts
 
 [MIT](LICENSE)
 
-### Adding a New Tool
-
-```typescript
-// electron/tools/impl/myTool.ts
-import type { ToolDefinition } from '../registry';
-
-const myTool: ToolDefinition<{ query: string }> = {
-  schema: {
-    type: 'function',
-    function: {
-      name: 'my_tool',
-      description: 'Does something useful',
-      parameters: {
-        type: 'object',
-        properties: {
-          query: { type: 'string', description: 'Search query' }
-        },
-        required: ['query']
-      }
-    }
-  },
-  async execute({ query }) {
-    return `Result: ${query}`;
-  }
-};
-export default myTool;
-```
-
-Register in `electron/tools/index.ts`, add to a toolset in `electron/toolsets.ts`.
-
-### Adding a New Platform
-
-1. `electron/bridges/adapters/` — Create adapter (`connect()` / `disconnect()`)
-2. `electron/tools/impl/` — Create platform send tool
-3. `electron/toolsets.ts` — Add platform toolset
-4. `electron/aiService.ts` — Add detection in `detectPlatform()`
-
----
-
-## 📊 Token Usage Reference
-
-| Mode | Per Request | Complex Task (3-10 ReAct rounds) |
-|------|------------|----------------------------------|
-| Chat | ~7,000 tokens | ~15,000 tokens |
-| Agent | ~9,000 tokens | ~30,000 - 90,000 tokens |
-| Developer | ~12,000 tokens | ~50,000 - 120,000 tokens |
-
-> Recommended: Large-context models like Doubao-Seed / DeepSeek-R1 / GPT-4o / Qwen-Plus.
-
----
-
-## 🗺 Roadmap
-
-- [x] ReAct Loop Agent system
-- [x] Hermes-style structured memory
-- [x] Discord / WeChat remote control
-- [x] Multi TTS engine (Edge-TTS + MOSS-TTS-Nano)
-- [x] Batch tasks & Worker mode
-- [x] Developer mode (methodology-driven software engineering)
-- [ ] macOS / Linux support
-- [ ] Telegram integration
-- [ ] Plugin system
-- [ ] Multi-character Live2D model switching
-- [ ] Voice input (ASR)
-
----
-
-## 🙏 Acknowledgements
-
-- [Live2D Cubism SDK](https://www.live2d.com/) — Live2D model rendering
-- [Hermes Agent](https://github.com/NousResearch/hermes-agent) — Major reference for agent architecture & memory system
-- [Project AIRI](https://github.com/moeru-ai/airi) — Pioneer of anime AI companions
-- [Electron](https://www.electronjs.org/) — Cross-platform desktop framework
-- [Playwright](https://playwright.dev/) — Browser automation
-
----
-
-## 📄 License
-
-[MIT](LICENSE)
