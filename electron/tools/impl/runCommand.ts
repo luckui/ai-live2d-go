@@ -14,8 +14,28 @@
  */
 
 import { exec } from 'child_process';
+import { app } from 'electron';
+import { join } from 'path';
 import type { ToolDefinition } from '../types';
 import { terminalManager } from '../terminalManager';
+
+/**
+ * 为子进程注入 Hiyori 应用路径环境变量，
+ * 使 Agent 在任意 shell 命令中可通过 %HIYORI_UV_EXE% / %HIYORI_DATA_DIR% 访问。
+ */
+function buildEnv(userEnv?: Record<string, string>): Record<string, string> {
+  const uvExe = app.isPackaged
+    ? join(process.resourcesPath, 'tools', 'uv.exe')
+    : join(app.getAppPath(), 'tools', 'uv.exe');
+  const dataDir = app.getPath('userData');
+
+  return {
+    ...process.env as Record<string, string>,
+    HIYORI_UV_EXE: uvExe,
+    HIYORI_DATA_DIR: dataDir,
+    ...userEnv,
+  };
+}
 
 interface RunCommandParams {
   /** 要执行的命令（Shell 语法） */
@@ -93,7 +113,7 @@ const runCommandTool: ToolDefinition<RunCommandParams> = {
         const { id, output } = await terminalManager.startTerminal(
           command,
           cwd ?? process.cwd(),
-          env,
+          buildEnv(env),
           5000,  // 初始输出等待 5s
         );
 
@@ -148,8 +168,8 @@ const runCommandTool: ToolDefinition<RunCommandParams> = {
       // Windows：chcp 65001 切换到 UTF-8，避免中文输出乱码
       const actualCommand = isWin ? `chcp 65001 > nul && ${command}` : command;
 
-      // 合并环境变量
-      const mergedEnv = env ? { ...process.env, ...env } : process.env;
+      // 合并环境变量（自动注入 HIYORI_UV_EXE / HIYORI_DATA_DIR）
+      const mergedEnv = buildEnv(env);
 
       exec(
         actualCommand,

@@ -689,6 +689,220 @@ html, body {
   cursor: text;
 }
 
+/* ===== 终端块（terminal-block） ===== */
+.terminal-block {
+  margin: 4px 10px 4px 36px;
+  background: rgba(30, 30, 40, 0.92);
+  border: 1px solid rgba(100, 120, 180, 0.3);
+  border-radius: 8px;
+  font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+  font-size: 11px;
+  color: #d4d4d4;
+  overflow: hidden;
+  opacity: 0;
+  transform: translateY(4px);
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+.terminal-block.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+.terminal-block-header {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 8px;
+  background: rgba(50, 50, 65, 0.9);
+  border-bottom: 1px solid rgba(100, 120, 180, 0.2);
+  font-size: 10px;
+  color: #888;
+  cursor: pointer;
+  user-select: none;
+}
+.terminal-block-header .tb-icon {
+  font-size: 10px;
+}
+.terminal-block-header .tb-title {
+  flex: 1;
+}
+.terminal-block-header .tb-status {
+  font-size: 9px;
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+.tb-status-running { color: #4ec9b0; background: rgba(78, 201, 176, 0.15); }
+.tb-status-done    { color: #6a9955; background: rgba(106, 153, 85, 0.15); }
+.tb-status-error   { color: #f44747; background: rgba(244, 71, 71, 0.15); }
+.terminal-block-body {
+  padding: 6px 8px;
+  max-height: 150px;
+  overflow-y: auto;
+  line-height: 1.5;
+  -webkit-user-select: text;
+  user-select: text;
+}
+.terminal-block-body.collapsed {
+  display: none;
+}
+.terminal-block-line {
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.terminal-block-line.cmd {
+  color: #569cd6;
+}
+.terminal-block-line.cmd::before {
+  content: '$ ';
+  color: #6a9955;
+}
+.terminal-block-line.ok {
+  color: #6a9955;
+}
+.terminal-block-line.err {
+  color: #f44747;
+}
+
+/* ===== 转写结果气泡 ===== */
+.transcription-bubble {
+  margin: 1px 10px 1px 36px;
+  opacity: 0;
+  transform: translateY(4px);
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+.transcription-bubble.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+.transcription-bubble-inner {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  background: rgba(78, 201, 176, 0.06);
+  border-left: 2px solid rgba(78, 201, 176, 0.3);
+  border-radius: 0 10px 10px 0;
+  font-size: 11.5px;
+  color: #556;
+  max-width: 100%;
+}
+.transcription-bubble .tb-ear {
+  font-size: 11px;
+  flex-shrink: 0;
+}
+.transcription-bubble .tb-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.transcription-bubble .tb-meta {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+.transcription-bubble .tb-lang {
+  font-size: 9px;
+  color: #999;
+}
+.transcription-bubble .tb-time {
+  font-size: 9px;
+  color: #bbb;
+}
+
+/* ===== 听觉指示器（input-area 上方的状态条） ===== */
+.hearing-indicator {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 5px 12px;
+  background: linear-gradient(135deg, rgba(78, 201, 176, 0.08), rgba(78, 201, 176, 0.03));
+  border-top: 1px solid rgba(78, 201, 176, 0.12);
+  border-bottom: 1px solid rgba(78, 201, 176, 0.12);
+  font-size: 11px;
+  color: #556;
+  gap: 8px;
+  opacity: 0;
+  transform: translateY(4px);
+  transition: opacity 0.25s ease, transform 0.25s ease;
+  flex-shrink: 0;
+}
+.hearing-indicator.active {
+  opacity: 1;
+  transform: translateY(0);
+}
+.hearing-ind-left {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
+}
+.hearing-pulse-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #4ec9b0;
+  flex-shrink: 0;
+  animation: hearing-pulse 1.5s ease-in-out infinite;
+}
+@keyframes hearing-pulse {
+  0%, 100% {
+    opacity: 1;
+    box-shadow: 0 0 0 0 rgba(78, 201, 176, 0.5);
+  }
+  50% {
+    opacity: 0.5;
+    box-shadow: 0 0 0 5px rgba(78, 201, 176, 0);
+  }
+}
+.hearing-ind-label {
+  font-weight: 600;
+  white-space: nowrap;
+  color: #4ec9b0;
+  flex-shrink: 0;
+}
+.hearing-ind-latest {
+  color: #888;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 1;
+  font-style: italic;
+}
+.hearing-ind-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.hearing-mode-badge {
+  padding: 1px 7px;
+  border-radius: 8px;
+  font-size: 10px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.hearing-mode-badge.dictation {
+  background: rgba(100, 149, 237, 0.15);
+  color: #4a7dd6;
+}
+.hearing-mode-badge.passive {
+  background: rgba(78, 201, 176, 0.15);
+  color: #3da88c;
+}
+.hearing-mode-badge.summary {
+  background: rgba(218, 165, 32, 0.15);
+  color: #b0930a;
+}
+.hearing-ind-count {
+  color: #999;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
 /* ===== 输入区域 ===== */
 #input-area {
   display: flex;

@@ -3,6 +3,7 @@
 // =====================================================
 
 import { playTTS } from './ttsPlayer';
+import { startCapture, stopCapture, onTranscription } from './hearing';
 
 console.log('[Chat] module loaded ✅ (带TTS版本)');
 
@@ -66,6 +67,9 @@ declare global {
 let currentConversationId: string | null = null;
 let isConvPanelOpen = false;
 let isSending = false;
+
+/** 听觉系统实时状态 */
+let hearingTranscriptionCount = 0;
 
 // =====================================================
 // 工具函数
@@ -305,7 +309,273 @@ function addToolCallBubble(ev: {
 }
 
 // =====================================================
-// 发送消息
+// 终端块（Terminal Block）— 实时展示命令执行进度
+// =====================================================
+
+/** 活跃的终端块 Map（blockId → DOM 元素） */
+const activeTerminalBlocks = new Map<string, {
+  container: HTMLElement;
+  body: HTMLElement;
+  statusEl: HTMLElement;
+}>();
+
+/**
+ * 创建或追加终端块内容
+ */
+function handleTerminalBlock(ev: {
+  blockId: string;
+  line?: string;
+  status?: 'running' | 'done' | 'error';
+  title?: string;
+}): void {
+  const messagesDiv = document.getElementById('messages');
+  if (!messagesDiv) return;
+
+  let block = activeTerminalBlocks.get(ev.blockId);
+
+  // 首次创建
+  if (!block) {
+    const container = document.createElement('div');
+    container.className = 'terminal-block';
+
+    const header = document.createElement('div');
+    header.className = 'terminal-block-header';
+
+    const statusEl = document.createElement('span');
+    statusEl.className = 'tb-status tb-status-running';
+    statusEl.textContent = '运行中';
+
+    header.innerHTML = `
+      <span class="tb-icon">⚙️</span>
+      <span class="tb-title">${escapeHtml(ev.title || '终端')}</span>
+    `;
+    header.appendChild(statusEl);
+
+    const body = document.createElement('div');
+    body.className = 'terminal-block-body';
+
+    // 点击 header 折叠/展开
+    header.addEventListener('click', () => {
+      body.classList.toggle('collapsed');
+    });
+
+    container.appendChild(header);
+    container.appendChild(body);
+    messagesDiv.appendChild(container);
+
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => container.classList.add('visible'));
+    });
+
+    block = { container, body, statusEl };
+    activeTerminalBlocks.set(ev.blockId, block);
+  }
+
+  // 追加行
+  if (ev.line) {
+    const lineEl = document.createElement('div');
+    lineEl.className = 'terminal-block-line';
+
+    // 智能识别行类型
+    const trimmed = ev.line.trim();
+    if (trimmed.startsWith('$') || trimmed.startsWith('>')) {
+      lineEl.className += ' cmd';
+      lineEl.textContent = trimmed.replace(/^\$\s*/, '').replace(/^>\s*/, '');
+    } else if (trimmed.startsWith('✅') || trimmed.startsWith('✓')) {
+      lineEl.className += ' ok';
+      lineEl.textContent = trimmed;
+    } else if (trimmed.startsWith('❌') || trimmed.startsWith('✗')) {
+      lineEl.className += ' err';
+      lineEl.textContent = trimmed;
+    } else {
+      lineEl.textContent = trimmed;
+    }
+
+    block.body.appendChild(lineEl);
+    // 自动滚动到最新行
+    block.body.scrollTop = block.body.scrollHeight;
+  }
+
+  // 更新状态
+  if (ev.status) {
+    block.statusEl.className = `tb-status tb-status-${ev.status}`;
+    switch (ev.status) {
+      case 'running':
+        block.statusEl.textContent = '运行中';
+        break;
+      case 'done':
+        block.statusEl.textContent = '完成';
+        // 完成后从活跃 map 移除
+        activeTerminalBlocks.delete(ev.blockId);
+        break;
+      case 'error':
+        block.statusEl.textContent = '失败';
+        activeTerminalBlocks.delete(ev.blockId);
+        break;
+    }
+  }
+
+  scrollToBottom();
+}
+
+// =====================================================
+// 听觉系统 UI（指示器 + 转录流 + 自动发送）
+// =====================================================
+
+/**
+ * 创建并显示听觉指示器条（固定在 input-area 上方）
+ * 包含：脉冲点 + 正在聆听 + 最新转录预览 + 模式标签 + 计数
+ */
+function showHearingIndicator(mode: string, source: string): void {
+  removeHearingIndicator();
+
+  const chatView = document.getElementById('chat-view');
+  const inputArea = document.getElementById('input-area');
+  if (!chatView || !inputArea) return;
+
+  const modeLabels: Record<string, string> = {
+    dictation: '语音输入', passive: '陪伴监听', summary: '总结',
+  };
+  const sourceLabels: Record<string, string> = {
+    mic: '麦克风', system: '系统音频', both: '全部',
+  };
+
+  const indicator = document.createElement('div');
+  indicator.id = 'hearing-indicator';
+  indicator.className = 'hearing-indicator';
+
+  indicator.innerHTML = `
+    <div class="hearing-ind-left">
+      <span class="hearing-pulse-dot"></span>
+      <span class="hearing-ind-label">正在聆听</span>
+      <span class="hearing-ind-latest" id="hearing-latest-text">${escapeHtml(sourceLabels[source] ?? source)}</span>
+    </div>
+    <div class="hearing-ind-right">
+      <span class="hearing-mode-badge ${escapeHtml(mode)}">${escapeHtml(modeLabels[mode] ?? mode)}</span>
+      <span class="hearing-ind-count" id="hearing-count">0 条</span>
+    </div>`;
+
+  chatView.insertBefore(indicator, inputArea);
+
+  // 延迟添加 active 类触发入场动画
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => indicator.classList.add('active'));
+  });
+}
+
+/** 移除听觉指示器 */
+function removeHearingIndicator(): void {
+  const el = document.getElementById('hearing-indicator');
+  if (el) {
+    el.classList.remove('active');
+    // 等动画结束再移除 DOM
+    setTimeout(() => el.remove(), 200);
+  }
+  hearingTranscriptionCount = 0;
+}
+
+/** 更新指示器：最新文本 + 计数 */
+function updateHearingIndicator(text: string): void {
+  hearingTranscriptionCount++;
+  const latestEl = document.getElementById('hearing-latest-text');
+  const countEl = document.getElementById('hearing-count');
+  if (latestEl) {
+    const preview = text.length > 35 ? text.slice(0, 35) + '…' : text;
+    latestEl.textContent = `"${preview}"`;
+    latestEl.title = text;
+  }
+  if (countEl) {
+    countEl.textContent = `${hearingTranscriptionCount} 条`;
+  }
+}
+
+/** 在消息流中添加一条转录气泡 */
+function addTranscriptionBubble(text: string, language: string): void {
+  const messagesDiv = document.getElementById('messages');
+  if (!messagesDiv) return;
+
+  const bubble = document.createElement('div');
+  bubble.className = 'transcription-bubble';
+
+  const time = new Date();
+  const timeStr = `${String(time.getHours()).padStart(2, '0')}:${String(time.getMinutes()).padStart(2, '0')}:${String(time.getSeconds()).padStart(2, '0')}`;
+
+  bubble.innerHTML = `
+    <div class="transcription-bubble-inner">
+      <span class="tb-ear">👂</span>
+      <span class="tb-text">${escapeHtml(text)}</span>
+      <span class="tb-meta">
+        <span class="tb-lang">${escapeHtml(language)}</span>
+        <span class="tb-time">${timeStr}</span>
+      </span>
+    </div>`;
+
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => bubble.classList.add('visible'));
+  });
+
+  messagesDiv.appendChild(bubble);
+  scrollToBottom();
+
+  // 超过 50 条转写气泡时移除旧的
+  const allBubbles = messagesDiv.querySelectorAll('.transcription-bubble');
+  if (allBubbles.length > 50) {
+    allBubbles[0].remove();
+  }
+}
+
+/**
+ * 自动发送消息（听写模式 / 总结模式触发）
+ * 与手动 sendMessage 共享同一套显示逻辑
+ */
+async function autoSendMessage(text: string, type: 'dictation' | 'summary'): Promise<void> {
+  if (!currentConversationId) return;
+  if (isSending) return; // 不打断正在进行的对话
+
+  const content = type === 'summary'
+    ? `请帮我总结以下听到的内容：\n\n${text}`
+    : text;
+
+  addMessage('user', content);
+  const typing = addTypingIndicator();
+  isSending = true;
+
+  const sendBtn = document.getElementById('send-btn') as HTMLButtonElement;
+  if (sendBtn) {
+    sendBtn.classList.add('stop-mode');
+    sendBtn.innerHTML = `
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+        <rect x="6" y="6" width="12" height="12" rx="2"/>
+      </svg>`;
+  }
+
+  try {
+    const result = await window.chatAPI!.send(currentConversationId, content);
+    typing?.remove();
+    addMessage('ai', result.content, true, result.created_at);
+    playTTS(result.content).catch((e) => console.error('[TTS] playTTS error:', e));
+    await refreshConvTitle(currentConversationId);
+  } catch (e) {
+    typing?.remove();
+    const errMsg = (e as Error).message;
+    if (errMsg.includes('aborted') || errMsg.includes('stopped')) {
+      addMessage('ai', '（已停止回答）');
+    } else {
+      addMessage('ai', `（出错了：${errMsg}）`);
+    }
+  } finally {
+    isSending = false;
+    if (sendBtn) {
+      sendBtn.disabled = false;
+      sendBtn.classList.remove('stop-mode');
+      sendBtn.innerHTML = `
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
+        </svg>`;
+    }
+  }
+}
+
 // =====================================================
 // 发送消息
 // =====================================================
@@ -387,8 +657,6 @@ async function sendMessage(): Promise<void> {
   }
 }
 
-// =====================================================
-// 对话管理
 // =====================================================
 // 对话管理
 // =====================================================
@@ -767,6 +1035,43 @@ export async function initChat(): Promise<void> {
       listDiv.classList.add('todo-list-expanded');
       toggleBtn.classList.remove('collapsed');
     }
+  });
+
+  // ── 终端块事件（terminal-block） ──────────────────────────────
+  window.hearingAPI?.onTerminalBlock((ev) => {
+    handleTerminalBlock(ev);
+  });
+
+  // ── 听觉系统事件 ──────────────────────────────────────────────
+  // 注册转写结果回调：更新指示器 + 添加气泡
+  onTranscription((result) => {
+    updateHearingIndicator(result.text);
+    addTranscriptionBubble(result.text, result.language);
+  });
+
+  // 监听 main 进程通知 renderer 开始/停止音频捕获
+  window.hearingAPI?.onStarted((ev) => {
+    console.log('[Hearing] 收到启动通知, source:', ev.source, 'wsUrl:', ev.wsUrl, 'mode:', ev.mode);
+    showHearingIndicator(ev.mode ?? 'passive', ev.source);
+    startCapture(ev.wsUrl, ev.source as 'mic' | 'system' | 'both').catch((err) => {
+      console.error('[Hearing] 启动音频捕获失败:', err);
+      removeHearingIndicator();
+      addTranscriptionBubble(`⚠ 音频捕获失败: ${(err as Error).message}`, 'error');
+      // 通知 main 进程捕获失败，重置 active 状态
+      window.hearingAPI?.reportCaptureFailed((err as Error).message);
+    });
+  });
+
+  window.hearingAPI?.onStopped(() => {
+    console.log('[Hearing] 收到停止通知');
+    removeHearingIndicator();
+    stopCapture();
+  });
+
+  // 听写/总结模式自动发送
+  window.hearingAPI?.onAutoSend((ev) => {
+    console.log(`[Hearing] 自动发送 (${ev.type}):`, ev.text.slice(0, 50));
+    autoSendMessage(ev.text, ev.type);
   });
 }
 

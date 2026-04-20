@@ -39,6 +39,11 @@
         "from": "tts-server-nano",
         "to": "tts-server-nano",
         "filter": ["**/*", "!.venv/**", "!__pycache__/**", "!.server.pid", "!models/**", "!generated_audio/**"]
+      },
+      {
+        "from": "stt-server",
+        "to": "stt-server",
+        "filter": ["**/*", "!.venv/**", "!__pycache__/**", "!.server.pid"]
       }
     ],
     "files": [

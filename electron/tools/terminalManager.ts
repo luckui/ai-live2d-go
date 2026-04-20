@@ -59,8 +59,8 @@ class TerminalManager {
       
       const args = isWin ? ['/c', actualCommand] : ['-c', actualCommand];
       
-      // 合并环境变量
-      const mergedEnv = env ? { ...process.env, ...env } : process.env;
+      // 环境变量（调用方已通过 buildEnv 合并 process.env + Hiyori 变量）
+      const mergedEnv = env ?? { ...process.env };
 
       // 启动进程
       try {

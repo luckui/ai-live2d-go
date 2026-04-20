@@ -116,3 +116,76 @@ contextBridge.exposeInMainWorld('debugAPI', {
     durationMs: number;
   }) => void) => ipcRenderer.on('tool-call-log', (_e, ev) => cb(ev)),
 });
+
+/** 听觉系统 API（语音转文字 / STT） */
+contextBridge.exposeInMainWorld('hearingAPI', {
+  /** 启动听觉系统 */
+  start: (source: string) => ipcRenderer.invoke('hearing:start', source),
+  /** 停止听觉系统 */
+  stop: () => ipcRenderer.invoke('hearing:stop'),
+  /** 获取听觉系统状态 */
+  getStatus: () => ipcRenderer.invoke('hearing:status'),
+  /** 监听：main 通知 renderer 开始音频捕获 */
+  onStarted: (cb: (ev: { source: string; wsUrl: string; mode: string }) => void) => {
+    const handler = (_e: unknown, ev: { source: string; wsUrl: string; mode: string }) => cb(ev);
+    ipcRenderer.on('hearing:started', handler);
+    return () => { ipcRenderer.removeListener('hearing:started', handler); };
+  },
+  /** 监听：main 通知 renderer 停止音频捕获 */
+  onStopped: (cb: () => void) => {
+    const handler = () => cb();
+    ipcRenderer.on('hearing:stopped', handler);
+    return () => { ipcRenderer.removeListener('hearing:stopped', handler); };
+  },
+  /** 监听：转写结果（main → renderer 推送） */
+  onTranscription: (cb: (result: {
+    text: string;
+    start: number;
+    end: number;
+    is_final: boolean;
+    language: string;
+    timestamp: number;
+  }) => void) => {
+    const handler = (_e: unknown, result: any) => cb(result);
+    ipcRenderer.on('hearing:transcription', handler);
+    return () => { ipcRenderer.removeListener('hearing:transcription', handler); };
+  },
+  /** renderer 上报转写结果到 main */
+  reportTranscription: (result: {
+    text: string;
+    start: number;
+    end: number;
+    is_final: boolean;
+    language: string;
+    timestamp: number;
+  }) => ipcRenderer.send('hearing:report-transcription', result),
+  /** renderer 上报音频捕获失败 */
+  reportCaptureFailed: (reason: string) => ipcRenderer.send('hearing:capture-failed', reason),
+  /** 监听终端块事件（安装进度等） */
+  onTerminalBlock: (cb: (ev: {
+    blockId: string;
+    line?: string;
+    status?: 'running' | 'done' | 'error';
+    title?: string;
+  }) => void) => {
+    const handler = (_e: unknown, ev: any) => cb(ev);
+    ipcRenderer.on('hearing:terminal-block', handler);
+    return () => { ipcRenderer.removeListener('hearing:terminal-block', handler); };
+  },
+  /** STT 本地服务管理（类比 ttsLocalAPI） */
+  sttStatus: () => ipcRenderer.invoke('stt:local:status'),
+  sttInstallAndStart: () => ipcRenderer.invoke('stt:local:install-and-start'),
+  sttStart: () => ipcRenderer.invoke('stt:local:start'),
+  sttStop: () => ipcRenderer.invoke('stt:local:stop'),
+  onSttLog: (cb: (msg: string) => void) => {
+    const handler = (_e: unknown, msg: string) => cb(msg);
+    ipcRenderer.on('stt:local:log', handler);
+    return () => { ipcRenderer.removeListener('stt:local:log', handler); };
+  },
+  /** 监听：听写/总结模式自动发送（main → renderer 触发消息发送流程） */
+  onAutoSend: (cb: (ev: { text: string; type: 'dictation' | 'summary' }) => void) => {
+    const handler = (_e: unknown, ev: any) => cb(ev);
+    ipcRenderer.on('hearing:auto-send', handler);
+    return () => { ipcRenderer.removeListener('hearing:auto-send', handler); };
+  },
+});

@@ -132,6 +132,7 @@ export const TOOLSETS: Record<string, ToolsetDefinition> = {
       
       // TTS 语音管理
       "manage_tts",              // 🆕 管理本地 TTS 语音合成服务
+      "manage_hearing",          // 🆕 管理听觉系统（STT 语音识别）
 
       // 基础工具
       "take_screenshot",         // 截图（屏幕）
@@ -166,6 +167,7 @@ export const TOOLSETS: Record<string, ToolsetDefinition> = {
       "write_file",              // Skill: 写入文件
       // "check_python_env",        // Skill: 检查 Python 环境
       "manage_tts",              // 🆕 管理本地 TTS 语音合成服务
+      "manage_hearing",          // 🆕 管理听觉系统（STT 语音识别）
       
       // 异步任务
       "async_task",              // 🆕 异步后台任务管理
@@ -223,6 +225,7 @@ export const TOOLSETS: Record<string, ToolsetDefinition> = {
       // "open_terminal",
       // "check_python_env",
       "manage_tts",              // 🆕 管理本地 TTS 语音合成服务
+      "manage_hearing",          // 🆕 管理听觉系统（STT 语音识别）
       
       // 异步任务
       "async_task",              // 🆕 异步后台任务管理

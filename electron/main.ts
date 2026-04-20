@@ -1,7 +1,7 @@
 /// <reference types="node" />
 // 必须在所有 import 之前加载，这样 ai.config.ts 里的 process.env 才能取到局部 .env 的实际内容
 import * as dotenv from 'dotenv';
-import { app, BrowserWindow, ipcMain, screen } from 'electron';
+import { app, BrowserWindow, desktopCapturer, ipcMain, screen, session } from 'electron';
 import { join } from 'path';
 
 /**
@@ -101,6 +101,8 @@ import defaultTTSConfig from './tts.config';
 import type { TTSConfig, TTSProviderConfig } from './tts.config';
 import { getAgentMode, setAgentMode } from './agentMode';
 import * as ttsServerManager from './ttsServerManager';
+import * as sttServerManager from './sttServerManager';
+import { hearingManager } from './hearingManager';
 import { taskManager } from './taskManager';
 import { taskScheduler } from './taskScheduler';
 
@@ -672,6 +674,74 @@ function createWindow(): void {
 
   ipcMain.handle('tts:local:stop', (_e, engine?: string) => ttsServerManager.stopServer(engine));
 
+  // ── STT 本地服务管理（听觉系统） ──────────────────────────────
+  ipcMain.handle('stt:local:status', () => sttServerManager.getStatus());
+
+  ipcMain.handle('stt:local:install-and-start', async (e) => {
+    const sender = e.sender;
+    const logs: string[] = [];
+    const result = await sttServerManager.installAndStart((msg) => {
+      logs.push(msg);
+      try { sender.send('stt:local:log', msg); } catch { /* window closed */ }
+    });
+    return { ...result, logs };
+  });
+
+  ipcMain.handle('stt:local:start', async (e) => {
+    const sender = e.sender;
+    const result = await sttServerManager.startServer();
+    if (!result.ok) {
+      try { sender.send('stt:local:log', result.detail); } catch { /* ignore */ }
+    }
+    return result;
+  });
+
+  ipcMain.handle('stt:local:stop', () => sttServerManager.stopServer());
+
+  // ── 听觉系统管理 ─────────────────────────────────────────────
+  ipcMain.handle('hearing:start', async (_e, source: string, mode?: string) => {
+    return hearingManager.start(source as any, (mode ?? 'passive') as any);
+  });
+
+  ipcMain.handle('hearing:stop', async () => {
+    return hearingManager.stop();
+  });
+
+  ipcMain.handle('hearing:status', () => hearingManager.getStatus());
+
+  // renderer 上报转写结果
+  ipcMain.on('hearing:report-transcription', (_e, result) => {
+    hearingManager.onTranscription(result);
+  });
+
+  // renderer 上报音频捕获失败 → 重置 main 侧状态
+  ipcMain.on('hearing:capture-failed', (_e, reason: string) => {
+    hearingManager.onCaptureFailed(reason);
+  });
+
+  // ── 听觉事件（事件驱动，工具路径 + IPC 路径共用） ──────────
+  hearingManager.on('started', (ev) => {
+    mainWin?.webContents?.send('hearing:started', ev);
+  });
+
+  hearingManager.on('stopped', () => {
+    mainWin?.webContents?.send('hearing:stopped');
+  });
+
+  hearingManager.on('transcription', (result) => {
+    mainWin?.webContents?.send('hearing:transcription', result);
+  });
+
+  // 听写模式：合并文本就绪 → 自动作为用户消息发给 AI
+  hearingManager.on('dictation-ready', (text: string) => {
+    mainWin?.webContents?.send('hearing:auto-send', { text, type: 'dictation' });
+  });
+
+  // 总结模式：停止时全文就绪 → 自动发给 AI 请求总结
+  hearingManager.on('summary-ready', (text: string) => {
+    mainWin?.webContents?.send('hearing:auto-send', { text, type: 'summary' });
+  });
+
   // ── 异步任务管理 ──────────────────────────────────────────────
   ipcMain.handle('task:list', (_e, statusFilter?: string) => {
     return taskManager.listTasks(statusFilter ? { status: statusFilter as any } : undefined);
@@ -699,6 +769,16 @@ function createWindow(): void {
 app.whenReady().then(() => {
   initDatabase();
   loadPersistedConfig();
+
+  // ── 系统音频捕获支持：拦截 renderer 的 getDisplayMedia 请求 ──
+  // 自动选择主屏幕 + loopback 回环音频，无需用户手动选择
+  session.defaultSession.setDisplayMediaRequestHandler((_request, callback) => {
+    desktopCapturer.getSources({ types: ['screen'] }).then((sources) => {
+      callback({ video: sources[0], audio: 'loopback' });
+    }).catch(() => {
+      callback({ video: undefined as any, audio: undefined as any });
+    });
+  });
 
   // 启动时激活 TTS provider（默认 enabled=false，不会连接）
   activateTTSProvider();
