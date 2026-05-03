@@ -317,7 +317,34 @@ const activeTerminalBlocks = new Map<string, {
   container: HTMLElement;
   body: HTMLElement;
   statusEl: HTMLElement;
+  copyBtn: HTMLButtonElement;
 }>();
+
+async function copyTextToClipboard(text: string): Promise<boolean> {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {
+    // Fall through to the legacy copy path.
+  }
+
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.setAttribute('readonly', 'true');
+  textarea.style.position = 'fixed';
+  textarea.style.opacity = '0';
+  textarea.style.pointerEvents = 'none';
+  document.body.appendChild(textarea);
+  textarea.select();
+
+  try {
+    return document.execCommand('copy');
+  } finally {
+    document.body.removeChild(textarea);
+  }
+}
 
 /**
  * 创建或追加终端块内容
@@ -345,11 +372,18 @@ function handleTerminalBlock(ev: {
     statusEl.className = 'tb-status tb-status-running';
     statusEl.textContent = '运行中';
 
+    const copyBtn = document.createElement('button');
+    copyBtn.className = 'tb-copy-btn';
+    copyBtn.type = 'button';
+    copyBtn.textContent = '复制';
+    copyBtn.title = '复制终端输出';
+
     header.innerHTML = `
       <span class="tb-icon">⚙️</span>
       <span class="tb-title">${escapeHtml(ev.title || '终端')}</span>
     `;
     header.appendChild(statusEl);
+    header.appendChild(copyBtn);
 
     const body = document.createElement('div');
     body.className = 'terminal-block-body';
@@ -357,6 +391,18 @@ function handleTerminalBlock(ev: {
     // 点击 header 折叠/展开
     header.addEventListener('click', () => {
       body.classList.toggle('collapsed');
+    });
+
+    copyBtn.addEventListener('click', async (event) => {
+      event.stopPropagation();
+      const text = body.innerText.trim();
+      if (!text) return;
+
+      const ok = await copyTextToClipboard(text);
+      copyBtn.textContent = ok ? '已复制' : '复制失败';
+      window.setTimeout(() => {
+        copyBtn.textContent = '复制';
+      }, 1200);
     });
 
     container.appendChild(header);
@@ -367,7 +413,7 @@ function handleTerminalBlock(ev: {
       requestAnimationFrame(() => container.classList.add('visible'));
     });
 
-    block = { container, body, statusEl };
+    block = { container, body, statusEl, copyBtn };
     activeTerminalBlocks.set(ev.blockId, block);
   }
 

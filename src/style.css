@@ -730,6 +730,18 @@ html, body {
   padding: 1px 5px;
   border-radius: 3px;
 }
+.terminal-block-header .tb-copy-btn {
+  border: 0;
+  border-radius: 4px;
+  padding: 2px 6px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #cfd6e6;
+  font-size: 10px;
+  cursor: pointer;
+}
+.terminal-block-header .tb-copy-btn:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
 .tb-status-running { color: #4ec9b0; background: rgba(78, 201, 176, 0.15); }
 .tb-status-done    { color: #6a9955; background: rgba(106, 153, 85, 0.15); }
 .tb-status-error   { color: #f44747; background: rgba(244, 71, 71, 0.15); }
@@ -740,6 +752,12 @@ html, body {
   line-height: 1.5;
   -webkit-user-select: text;
   user-select: text;
+  cursor: text;
+}
+.terminal-block-body,
+.terminal-block-body * {
+  -webkit-user-select: text;
+  user-select: text;
 }
 .terminal-block-body.collapsed {
   display: none;
@@ -747,6 +765,8 @@ html, body {
 .terminal-block-line {
   white-space: pre-wrap;
   word-break: break-all;
+  -webkit-user-select: text;
+  user-select: text;
 }
 .terminal-block-line.cmd {
   color: #569cd6;
