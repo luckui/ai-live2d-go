@@ -16,11 +16,7 @@ import type { LAppModel } from './lappmodel';
 
 function getLiveModel(): LAppModel | null {
   try {
-    const delegate = LAppDelegate.getInstance();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const sub = (delegate as any)._subdelegates?.at(0);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return (sub?.getLive2DManager() as any)?._models?.at(0) ?? null;
+    return LAppDelegate.getInstance().getFirstSubdelegate()?.getLive2DManager().getFirstModel() ?? null;
   } catch {
     return null;
   }
@@ -124,6 +120,67 @@ type TtsAPI = {
   speak(text: string): Promise<{ data: string } | null>;
 };
 
+// ── WebAudio 共享 AudioContext + 实时口型 ─────────────────────────
+
+let _audioCtx: AudioContext | null = null;
+let _rafId: number | null = null;
+
+function getAudioContext(): AudioContext {
+  if (!_audioCtx || _audioCtx.state === 'closed') {
+    _audioCtx = new AudioContext();
+  }
+  return _audioCtx;
+}
+
+function stopLipSync(): void {
+  if (_rafId !== null) {
+    cancelAnimationFrame(_rafId);
+    _rafId = null;
+  }
+  (window as any)._live2dMouthOpen = 0;
+}
+
+/**
+ * 通过 WebAudio AnalyserNode 播放 AudioBuffer，同时实时驱动 Live2D 口型。
+ * 返回 Promise，在音频播放结束时 resolve。
+ */
+function playBufferWithLipSync(audioBuffer: AudioBuffer): Promise<void> {
+  return new Promise<void>((resolve) => {
+    const ctx = getAudioContext();
+
+    const analyser = ctx.createAnalyser();
+    analyser.fftSize = 512;
+    const dataArray = new Uint8Array(analyser.fftSize);
+
+    const source = ctx.createBufferSource();
+    source.buffer = audioBuffer;
+    source.connect(analyser);
+    analyser.connect(ctx.destination);
+
+    // 实时读取 RMS，写入 window._live2dMouthOpen
+    const loop = (): void => {
+      analyser.getByteTimeDomainData(dataArray);
+      let sumSq = 0;
+      for (let i = 0; i < dataArray.length; i++) {
+        const norm = (dataArray[i] - 128) / 128; // [-1, 1]
+        sumSq += norm * norm;
+      }
+      const rms = Math.sqrt(sumSq / dataArray.length);
+      // 放大并鈓制到 [0, 1]，中文 TTS 音频振幅偶尔较小，提高系数确保口型明显
+      (window as any)._live2dMouthOpen = Math.min(1, rms * 10);
+      _rafId = requestAnimationFrame(loop);
+    };
+
+    source.onended = () => {
+      stopLipSync();
+      resolve();
+    };
+
+    source.start();
+    _rafId = requestAnimationFrame(loop);
+  });
+}
+
 export async function playTTS(text: string): Promise<void> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const ttsAPI = (window as any).ttsAPI as TtsAPI | undefined;
@@ -140,10 +197,16 @@ export async function playTTS(text: string): Promise<void> {
 
   // 递增世代，取消上一次未完成的播放队列；同时停止正在播放的音频
   const gen = ++_playGeneration;
-  getLiveModel()?._wavFileHandler.stop();
+  const model = getLiveModel();
+  model?._wavFileHandler.stop();
+  model?.setSpeaking(false); // 重置上一次的讲话状态
+  stopLipSync();
 
   const sentences = splitSentences(cleaned);
   console.log(`[TTS] 切分为 ${sentences.length} 句:`, sentences);
+
+  // 进入讲话状态：立即触发 Tap 动作，退出 Idle 循环
+  getLiveModel()?.setSpeaking(true);
 
   // ① 并发发起全部句子的 TTS 请求（流水线：请求第 N 句时第 N-1 句正在播放）
   const requests = sentences.map(s => ttsAPI.speak(s));
@@ -152,6 +215,8 @@ export async function playTTS(text: string): Promise<void> {
   for (let i = 0; i < requests.length; i++) {
     if (gen !== _playGeneration) {
       console.log('[TTS] 队列已被新请求取消，停止播放');
+      stopLipSync();
+      getLiveModel()?.setSpeaking(false);
       return;
     }
 
@@ -167,7 +232,11 @@ export async function playTTS(text: string): Promise<void> {
       continue;
     }
 
-    if (gen !== _playGeneration) return;
+    if (gen !== _playGeneration) {
+      stopLipSync();
+      getLiveModel()?.setSpeaking(false);
+      return;
+    }
 
     let buffer: ArrayBuffer;
     try {
@@ -177,17 +246,34 @@ export async function playTTS(text: string): Promise<void> {
       continue;
     }
 
-    const model = getLiveModel();
-    if (!model) {
-      console.warn('[TTS] 跳过：Live2D 模型未就绪');
-      return;
+    console.log(`[TTS] 第 ${i + 1}/${sentences.length} 句开始播放，字节:`, buffer.byteLength);
+
+    try {
+      // 用 WebAudio 解码并播放，同时驱动实时口型
+      const audioCtx = getAudioContext();
+      const audioBuffer = await audioCtx.decodeAudioData(buffer.slice(0));
+      if (gen !== _playGeneration) {
+        stopLipSync();
+        getLiveModel()?.setSpeaking(false);
+        return;
+      }
+      await playBufferWithLipSync(audioBuffer);
+    } catch (e) {
+      console.warn(`[TTS] 第 ${i + 1} 句 WebAudio 播放失败，回退 WAV:`, e);
+      // 回退：使用 WAV handler（口型不那么精准，但保证有声音）
+      const fallbackModel = getLiveModel();
+      if (fallbackModel) {
+        const fallbackBuf = base64ToBuffer(result.data);
+        await fallbackModel._wavFileHandler.startFromBuffer(fallbackBuf);
+        await fallbackModel._wavFileHandler.waitUntilEnd();
+      }
     }
 
-    console.log(`[TTS] 第 ${i + 1}/${sentences.length} 句开始播放，字节:`, buffer.byteLength);
-    await model._wavFileHandler.startFromBuffer(buffer);
-    await model._wavFileHandler.waitUntilEnd();
     console.log(`[TTS] 第 ${i + 1} 句播放完毕`);
   }
 
+  // 所有句子播放完毕，退出讲话状态，自然回归 Idle
+  stopLipSync();
+  getLiveModel()?.setSpeaking(false);
   console.log('[TTS] 全部句子播放完成');
 }

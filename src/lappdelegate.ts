@@ -197,5 +197,13 @@ export class LAppDelegate {
   private pointMovedEventListener: (this: Document, ev: PointerEvent) => void;
   private pointEndedEventListener: (this: Document, ev: PointerEvent) => void;
   private pointCancelEventListener: (this: Document, ev: PointerEvent) => void;
+
+  /** 获取第一个 subdelegate（供 live2dController 使用） */
+  public getFirstSubdelegate(): LAppSubdelegate | null {
+    if (this._subdelegates && this._subdelegates.getSize() > 0) {
+      return this._subdelegates.at(0);
+    }
+    return null;
+  }
 }
 

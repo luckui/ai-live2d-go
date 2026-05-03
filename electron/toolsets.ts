@@ -133,6 +133,7 @@ export const TOOLSETS: Record<string, ToolsetDefinition> = {
       // TTS 语音管理
       "manage_tts",              // 🆕 管理本地 TTS 语音合成服务
       "manage_hearing",          // 🆕 管理听觉系统（STT 语音识别）
+      "manage_live2d",           // 🆕 控制 Live2D 角色情绪与动作
 
       // 基础工具
       "take_screenshot",         // 截图（屏幕）
@@ -168,6 +169,7 @@ export const TOOLSETS: Record<string, ToolsetDefinition> = {
       // "check_python_env",        // Skill: 检查 Python 环境
       "manage_tts",              // 🆕 管理本地 TTS 语音合成服务
       "manage_hearing",          // 🆕 管理听觉系统（STT 语音识别）
+      "manage_live2d",           // 🆕 控制 Live2D 角色情绪与动作
       
       // 异步任务
       "async_task",              // 🆕 异步后台任务管理
@@ -226,6 +228,7 @@ export const TOOLSETS: Record<string, ToolsetDefinition> = {
       // "check_python_env",
       "manage_tts",              // 🆕 管理本地 TTS 语音合成服务
       "manage_hearing",          // 🆕 管理听觉系统（STT 语音识别）
+      "manage_live2d",           // 🆕 控制 Live2D 角色情绪与动作
       
       // 异步任务
       "async_task",              // 🆕 异步后台任务管理
@@ -280,6 +283,17 @@ export const TOOLSETS: Record<string, ToolsetDefinition> = {
       // developer 自身不需要额外工具，全部通过 includes 继承
     ],
     includes: ["agent-debug"],  // ← 继承 agent-debug 的全部工具
+  },
+
+  // ═════════════════════════════════════════════════════════════
+  // Live2D 控制工具集（角色表情与动作管理）
+  // ═════════════════════════════════════════════════════════════
+
+  "live2d": {
+    description: "Live2D 角色控制（情绪/动作/参数）",
+    tools: [
+      "manage_live2d",          // 设置情绪、播放动作、直接控制参数
+    ],
   },
 };
 

@@ -4,6 +4,7 @@
 
 import { playTTS } from './ttsPlayer';
 import { startCapture, stopCapture, onTranscription } from './hearing';
+import { initLive2DController, extractEmotionTag, triggerEmotion } from './live2dController';
 
 console.log('[Chat] module loaded ✅ (带TTS版本)');
 
@@ -476,8 +477,7 @@ function showHearingIndicator(mode: string, source: string): void {
   removeHearingIndicator();
 
   const chatView = document.getElementById('chat-view');
-  const inputArea = document.getElementById('input-area');
-  if (!chatView || !inputArea) return;
+  if (!chatView) return;
 
   const modeLabels: Record<string, string> = {
     dictation: '语音输入', passive: '陪伴监听', summary: '总结',
@@ -501,7 +501,7 @@ function showHearingIndicator(mode: string, source: string): void {
       <span class="hearing-ind-count" id="hearing-count">0 条</span>
     </div>`;
 
-  chatView.insertBefore(indicator, inputArea);
+  chatView.appendChild(indicator);
 
   // 延迟添加 active 类触发入场动画
   requestAnimationFrame(() => {
@@ -598,8 +598,15 @@ async function autoSendMessage(text: string, type: 'dictation' | 'summary'): Pro
   try {
     const result = await window.chatAPI!.send(currentConversationId, content);
     typing?.remove();
-    addMessage('ai', result.content, true, result.created_at);
-    playTTS(result.content).catch((e) => console.error('[TTS] playTTS error:', e));
+
+    // 自动解析 AI 回复中的情绪标签 [emotion:xxx]
+    const { emotion, cleaned: displayText } = extractEmotionTag(result.content);
+    if (emotion) {
+      triggerEmotion(emotion, 6000, true); // 持续 6 秒后自动复位
+    }
+
+    addMessage('ai', displayText, true, result.created_at);
+    playTTS(displayText).catch((e) => console.error('[TTS] playTTS error:', e));
     await refreshConvTitle(currentConversationId);
   } catch (e) {
     typing?.remove();
@@ -651,7 +658,7 @@ async function sendMessage(): Promise<void> {
     return;
   }
 
-  const input = document.getElementById('message-input') as HTMLInputElement;
+  const input = document.getElementById('message-input') as HTMLTextAreaElement;
   const text = input?.value.trim();
   if (!text) return;
 
@@ -847,7 +854,8 @@ function updateChatLayout(isExpanded: boolean): void {
   }
 
   const headerH = document.getElementById('chat-header')?.offsetHeight ?? 50;
-  const bodyH = isExpanded ? 320 : 0;
+  const inputH = document.getElementById('input-area')?.offsetHeight ?? 54;
+  const bodyH = isExpanded ? 320 : inputH;
   window.electronAPI?.resizeWindow(360 + headerH + bodyH);
 }
 
@@ -901,6 +909,9 @@ function setupWindowDrag(): void {
 
 export async function initChat(): Promise<void> {
   setupWindowDrag();
+
+  // 初始化 Live2D IPC 控制器（接收主进程情绪/动作命令）
+  initLive2DController();
 
   // 折叠/展开
   let isExpanded = true;
@@ -1002,7 +1013,7 @@ export async function initChat(): Promise<void> {
   // 发送消息
   document.getElementById('send-btn')?.addEventListener('click', () => sendMessage());
 
-  const input = document.getElementById('message-input') as HTMLInputElement;
+  const input = document.getElementById('message-input') as HTMLTextAreaElement;
   input?.addEventListener('keydown', (e: KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();

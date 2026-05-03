@@ -105,6 +105,7 @@ import * as sttServerManager from './sttServerManager';
 import { hearingManager } from './hearingManager';
 import { taskManager } from './taskManager';
 import { taskScheduler } from './taskScheduler';
+import { initLive2DBridge } from './live2dBridge';
 
 // ── 实运行时加载持久化的 LLM 配置 ──────────────────────────────
 
@@ -299,6 +300,7 @@ function createWindow(): void {
     }
   });
   mainWin = win;
+  initLive2DBridge(win);
 
   // 启动时用 screen-saver 层级，确保盖过全屏应用和其他 alwaysOnTop 窗口
   win.setAlwaysOnTop(true, 'screen-saver');

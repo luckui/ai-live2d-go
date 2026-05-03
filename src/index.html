@@ -70,21 +70,6 @@
               <div id="messages"></div>
             </div>
 
-            <!-- 输入框区域 -->
-            <div id="input-area">
-              <input
-                type="text"
-                id="message-input"
-                placeholder="说点什么..."
-                autocomplete="off"
-                spellcheck="false"
-              />
-              <button id="send-btn">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
-                </svg>
-              </button>
-            </div>
           </div><!-- /#chat-view -->
 
           <!-- 对话列表面板（左滑入） -->
@@ -94,6 +79,22 @@
           </div><!-- /#conv-panel -->
 
         </div><!-- /#chat-body -->
+
+        <!-- 输入框（折叠时仍显示） -->
+        <div id="input-area">
+          <textarea
+            id="message-input"
+            placeholder="说点什么..."
+            autocomplete="off"
+            spellcheck="false"
+            rows="1"
+          ></textarea>
+          <button id="send-btn">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
+            </svg>
+          </button>
+        </div>
 
       </div><!-- /#chat-panel -->
 

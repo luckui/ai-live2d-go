@@ -118,6 +118,14 @@ export class LAppLive2DManager {
     }
   }
 
+  /** 返回当前加载的第一个模型（供 live2dController 使用） */
+  public getFirstModel(): LAppModel | null {
+    if (this._models && this._models.getSize() > 0) {
+      return this._models.at(0) ?? null;
+    }
+    return null;
+  }
+
   public addModel(sceneIndex: number = 0): void {
     this._sceneIndex = sceneIndex;
     this.changeScene(this._sceneIndex);

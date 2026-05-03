@@ -189,3 +189,19 @@ contextBridge.exposeInMainWorld('hearingAPI', {
     return () => { ipcRenderer.removeListener('hearing:auto-send', handler); };
   },
 });
+
+/** Live2D 控制 API（主进程工具 → 渲染进程 Live2D 驱动） */
+contextBridge.exposeInMainWorld('live2dAPI', {
+  /**
+   * 监听来自主进程的 Live2D 控制命令。
+   * 渲染进程在初始化后调用一次注册回调。
+   */
+  onCommand: (cb: (cmd: {
+    type: 'emotion' | 'motion' | 'param' | 'query';
+    [key: string]: unknown;
+  }) => void) => {
+    const handler = (_e: unknown, cmd: any) => cb(cmd);
+    ipcRenderer.on('live2d:cmd', handler);
+    return () => { ipcRenderer.removeListener('live2d:cmd', handler); };
+  },
+});

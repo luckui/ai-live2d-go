@@ -129,6 +129,11 @@ html, body {
   height: 100%;
   display: block;
   background: transparent;
+  /* 覆盖父容器的 drag-region，让 canvas 自己接收 pointer 事件。
+     注意：不加 .no-drag 类，这样 setupWindowDrag 的 closest('.no-drag') 检查
+     不会把 canvas 排除在外，window 拖拽通过 JS/IPC 依然有效。 */
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
 }
 
 /* 画布上方控制按钮 */
@@ -926,24 +931,30 @@ html, body {
 /* ===== 输入区域 ===== */
 #input-area {
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   padding: 8px 12px 10px;
   gap: 8px;
   border-top: 1px solid rgba(245, 87, 108, 0.1);
   background: rgba(255, 255, 255, 0.6);
+  flex-shrink: 0;
 }
 
 #message-input {
   flex: 1;
   padding: 8px 14px;
   border: 1.5px solid rgba(200, 100, 150, 0.2);
-  border-radius: 22px;
+  border-radius: 14px;
   outline: none;
   font-size: 13px;
   font-family: var(--font);
   background: rgba(255, 255, 255, 0.85);
   color: #333;
   transition: border-color 0.2s, box-shadow 0.2s;
+  resize: none;
+  overflow-y: auto;
+  line-height: 1.45;
+  max-height: 120px;
+  field-sizing: content;
   /* 允许文字输入的元素可以选择文本 */
   -webkit-user-select: text;
   user-select: text;

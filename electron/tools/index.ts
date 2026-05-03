@@ -55,6 +55,7 @@ import discordSendFileTool from './impl/discordSendFile';
 import wechatSendFileTool from './impl/wechatSendFile';
 import manageTTSTool from './impl/manageTTS';
 import manageHearingTool from './impl/manageHearing';
+import manageLive2dTool from './impl/manageLive2d';
 import asyncTaskTool from './impl/asyncTask';
 import scheduleTaskTool from './impl/scheduleTask';
 
@@ -101,6 +102,7 @@ const registry = new ToolRegistry()
   .register(wechatSendFileTool)
   .register(manageTTSTool)
   .register(manageHearingTool)
+  .register(manageLive2dTool)
   .register(asyncTaskTool)
   .register(scheduleTaskTool);
 

@@ -45,6 +45,61 @@ import { CubismMoc } from '@framework/model/cubismmoc';
 import { LAppDelegate } from './lappdelegate';
 import { LAppSubdelegate } from './lappsubdelegate';
 
+// ── 情绪预设参数表（Hiyori_pro 无 exp3，用直接参数注入实现情绪）──────────────
+export const EMOTION_PRESETS: Record<string, Record<string, number>> = {
+  neutral: {
+    ParamMouthForm:  0,
+    ParamBrowLY:     0,   ParamBrowRY:     0,
+    ParamBrowLAngle: 0,   ParamBrowRAngle: 0,
+    ParamCheek:      0,
+  },
+  happy: {
+    ParamMouthForm:  1.0,
+    ParamBrowLY:     0.5, ParamBrowRY:     0.5,
+    ParamBrowLAngle: 0,   ParamBrowRAngle: 0,
+    ParamCheek:      0.5,
+  },
+  sad: {
+    ParamMouthForm:  -0.8,
+    ParamBrowLY:    -0.3, ParamBrowRY:    -0.3,
+    ParamBrowLAngle:-1.0, ParamBrowRAngle:-1.0,
+    ParamCheek:      0,
+  },
+  angry: {
+    ParamMouthForm:  -0.5,
+    ParamBrowLY:    -0.5, ParamBrowRY:    -0.5,
+    ParamBrowLAngle: 1.0, ParamBrowRAngle: 1.0,
+    ParamCheek:      0,
+  },
+  surprised: {
+    ParamMouthForm:  0.3,
+    ParamBrowLY:     1.0, ParamBrowRY:     1.0,
+    ParamBrowLAngle: 0,   ParamBrowRAngle: 0,
+    ParamCheek:      0,
+  },
+  thinking: {
+    ParamMouthForm:  -0.2,
+    ParamBrowLY:     0.3, ParamBrowRY:    -0.2,
+    ParamBrowLAngle: 0.5, ParamBrowRAngle:-0.3,
+    ParamCheek:      0,
+  },
+  shy: {
+    ParamMouthForm:  0.6,
+    ParamBrowLY:     0.5, ParamBrowRY:     0.5,
+    ParamBrowLAngle: 0,   ParamBrowRAngle: 0,
+    ParamCheek:      0.8,
+  },
+  embarrassed: {
+    ParamMouthForm:  0.2,
+    ParamBrowLY:     0.2, ParamBrowRY:     0.2,
+    ParamBrowLAngle:-0.5, ParamBrowRAngle:-0.5,
+    ParamCheek:      1.0,
+  },
+};
+
+/** neutral 复位参数 */
+const EMOTION_NEUTRAL_PARAMS = EMOTION_PRESETS.neutral;
+
 enum LoadStep {
   LoadAssets,
   LoadModel,
@@ -511,11 +566,15 @@ export class LAppModel extends CubismUserModel {
     //--------------------------------------------------------------------------
     this._model.loadParameters(); // 前回セーブされた状態をロード
     if (this._motionManager.isFinished()) {
-      // モーションの再生がない場合、待機モーションの中からランダムで再生する
-      this.startRandomMotion(
-        this._idleGroup,
-        LAppDefine.PriorityIdle
-      );
+      if (this._isSpeaking) {
+        // TTS 播放中：循环说话动作（Tap / Flick），让角色看起来在生动地讲话
+        const groups = LAppModel.SPEAKING_GROUPS;
+        const group = groups[Math.floor(Math.random() * groups.length)];
+        this.startRandomMotion(group, LAppDefine.PriorityIdle);
+      } else {
+        // モーションの再生がない場合、待機モーションの中からランダムで再生する
+        this.startRandomMotion(this._idleGroup, LAppDefine.PriorityIdle);
+      }
     } else {
       motionUpdated = this._motionManager.updateMotion(
         this._model,
@@ -570,8 +629,14 @@ export class LAppModel extends CubismUserModel {
     if (this._lipsync) {
       let value = 0.0; // リアルタイムでリップシンクを行う場合、システムから音量を取得して、0~1の範囲で値を入力します。
 
-      this._wavFileHandler.update(deltaTimeSeconds);
-      value = this._wavFileHandler.getRms();
+      // 外部 WebAudio RMS（TTS リアルタイム口型）が利用可能なら優先使用
+      const externalMouth = (window as any)._live2dMouthOpen as number | undefined;
+      if (typeof externalMouth === 'number' && externalMouth > 0) {
+        value = externalMouth;
+      } else {
+        this._wavFileHandler.update(deltaTimeSeconds);
+        value = this._wavFileHandler.getRms();
+      }
 
       for (let i = 0; i < this._lipSyncIds.getSize(); ++i) {
         this._model.addParameterValueById(this._lipSyncIds.at(i), value, 0.8);
@@ -582,6 +647,9 @@ export class LAppModel extends CubismUserModel {
     if (this._pose != null) {
       this._pose.updateParameters(this._model, deltaTimeSeconds);
     }
+
+    // 情绪参数过渡（直接参数控制，用于无 exp3 文件的模型）
+    this._updateEmotionTransition(deltaTimeSeconds);
 
     this._model.update();
   }
@@ -703,6 +771,107 @@ export class LAppModel extends CubismUserModel {
       onFinishedMotionHandler,
       onBeganMotionHandler
     );
+  }
+
+  // ── 说话状态（TTS 播放期间切换为说话动作循环）─────────────────────────
+
+  /** TTS 正在播放时为 true，切换 isFinished 时的动作组 */
+  private _isSpeaking = false;
+  /** 说话时随机循环的动作组（Tap 权重 2x，偶尔 Flick 增加变化感） */
+  private static readonly SPEAKING_GROUPS = ['Tap', 'Tap', 'Flick'] as const;
+
+  /**
+   * 设置 TTS 讲话状态。
+   * - true：立即用 Tap 动作打断当前 Idle，后续动作循环使用 Tap/Flick
+   * - false：下次 isFinished 时自然恢复到 Idle 循环
+   */
+  public setSpeaking(speaking: boolean): void {
+    if (this._isSpeaking === speaking) return;
+    this._isSpeaking = speaking;
+    if (speaking) {
+      // 立即打断 Idle，产生「开口说话」的视觉信号
+      this.startRandomMotion('Tap', LAppDefine.PriorityNormal);
+    }
+  }
+
+  // ── Live2D 情绪参数直控（Hiyori 无 exp3，用参数映射代替）──────────────
+
+  /** 当前情绪过渡目标值（参数ID → 目标值） */
+  private _emotionTarget: Map<string, number> = new Map();
+  /** 情绪过渡剩余时间（ms） */
+  private _emotionTransitionMs = 0;
+  /** 情绪过渡总时间（ms） */
+  private _emotionTransitionTotal = 300;
+  /** 情绪持续定时器（ms），0 = 永久 */
+  private _emotionDurationMs = 0;
+  /** 情绪持续已过时间（ms） */
+  private _emotionElapsedMs = 0;
+
+  /**
+   * 设置情绪参数（直接操作 Live2D 参数，用于无 exp3 文件的模型）。
+   * 情绪会在 transitionMs 内平滑插值，若 durationMs > 0 则自动复位到 neutral。
+   *
+   * @param params      参数ID → 目标值映射
+   * @param transitionMs 过渡时间（ms），默认 300
+   * @param durationMs  持续时间（ms），0 = 永久，默认 0
+   */
+  public setEmotionParams(
+    params: Record<string, number>,
+    transitionMs = 300,
+    durationMs = 0,
+  ): void {
+    this._emotionTarget = new Map(Object.entries(params));
+    this._emotionTransitionMs = transitionMs;
+    this._emotionTransitionTotal = transitionMs;
+    this._emotionDurationMs = durationMs;
+    this._emotionElapsedMs = 0;
+  }
+
+  /**
+   * 直接以立即方式设置单个模型参数（供 manage_live2d set_param 使用）。
+   *
+   * @param parameterId Live2D 参数ID
+   * @param value       目标值
+   */
+  public setParameterDirect(parameterId: string, value: number): void {
+    if (!this._model) return;
+    const handle = CubismFramework.getIdManager().getId(parameterId);
+    this._model.setParameterValueById(handle, value);
+  }
+
+  /** 每帧推进情绪过渡（由 update() 调用） */
+  private _updateEmotionTransition(deltaTimeSeconds: number): void {
+    if (this._emotionTarget.size === 0) return;
+    if (!this._model) return;
+
+    const dtMs = deltaTimeSeconds * 1000;
+
+    // 过渡插值：alpha 从 0→1，blended 从 current→targetVal
+    if (this._emotionTransitionMs > 0) {
+      const alpha = Math.min(1, 1 - this._emotionTransitionMs / this._emotionTransitionTotal);
+      this._emotionTarget.forEach((targetVal, paramId) => {
+        const handle = CubismFramework.getIdManager().getId(paramId);
+        const current = this._model.getParameterValueById(handle);
+        const blended = current + (targetVal - current) * alpha;
+        this._model.setParameterValueById(handle, blended);
+      });
+      this._emotionTransitionMs -= dtMs;
+    } else {
+      // 过渡完成，维持目标值
+      this._emotionTarget.forEach((targetVal, paramId) => {
+        const handle = CubismFramework.getIdManager().getId(paramId);
+        this._model.setParameterValueById(handle, targetVal);
+      });
+
+      // 持续时间倒计时
+      if (this._emotionDurationMs > 0) {
+        this._emotionElapsedMs += dtMs;
+        if (this._emotionElapsedMs >= this._emotionDurationMs) {
+          // 自动复位到 neutral
+          this.setEmotionParams(EMOTION_NEUTRAL_PARAMS, 500, 0);
+        }
+      }
+    }
   }
 
   /**

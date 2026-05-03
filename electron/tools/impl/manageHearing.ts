@@ -2,7 +2,7 @@
  * Skill: manage_hearing
  *
  * 管理听觉系统（语音转文字 / STT）。
- * 支持操作：status / install / start / stop / install_and_start
+ * 支持操作：status / setup / listen / stop / read
  *
  * 该工具让 AI Agent 能响应用户的语音识别安装/管理请求，
  * 自动完成 Python 虚拟环境创建、faster-whisper 安装、STT 服务启停。
@@ -30,20 +30,23 @@ function sendTerminalBlock(ev: {
 
 interface ManageHearingParams {
   /** 要执行的操作 */
-  action: 'status' | 'install' | 'start' | 'stop' | 'install_and_start'
-    | 'start_listening' | 'stop_listening' | 'get_transcript' | 'clear_transcript';
-  /** 音频源，start_listening 时指定 */
+  action: 'status' | 'setup' | 'listen' | 'stop' | 'read';
+  /** 音频源，listen 时指定 */
   source?: AudioSource;
-  /** 听觉模式 */
+  /** 听觉模式，listen 时指定 */
   mode?: HearingMode;
-  /** Whisper 模型大小 */
+  /** Whisper 模型大小，setup 时指定 */
   model?: STTModelSize;
-  /** 识别语言 */
+  /** 识别语言，setup 时指定 */
   language?: string;
-  /** get_transcript: 只获取此时间戳之后的条目 */
+  /** stop 时：是否同时停止 STT 后台进程（默认 false，仅停音频捕获） */
+  stop_server?: boolean;
+  /** read 时：只获取此时间戳（毫秒）之后的转录条目 */
   since?: number;
-  /** get_transcript: 只获取最近 N 条 */
+  /** read 时：只获取最近 N 条转录 */
   recent?: number;
+  /** read 时：读取后是否清空缓存（默认 false） */
+  clear?: boolean;
 }
 
 const manageHearingTool: ToolDefinition<ManageHearingParams> = {
@@ -55,18 +58,14 @@ const manageHearingTool: ToolDefinition<ManageHearingParams> = {
         '管理听觉系统（语音转文字 / STT / 语音识别）。\n' +
         '当用户说"帮我听"、"开始听"、"安装语音识别"、"听一下视频"等时使用此工具。\n\n' +
         '操作说明：\n' +
-        '  - status：查看听觉系统状态（STT 服务 + 听觉运行状态）\n' +
-        '  - install：仅安装 STT 环境（创建 venv + 安装 faster-whisper）\n' +
-        '  - start：仅启动 STT WebSocket 服务\n' +
-        '  - stop：停止 STT 服务\n' +
-        '  - install_and_start：首次安装并启动 STT 服务\n' +
-        '  - start_listening：开始听（启动音频捕获 + 连接 STT）\n' +
-        '  - stop_listening：停止听（停止音频捕获）\n' +
-        '  - get_transcript：获取转录缓存内容（陪伴监听模式下读取用户说了什么）\n' +
-        '  - clear_transcript：清空转录缓存\n\n' +
-        '听觉模式（start_listening 时用 mode 指定）：\n' +
+        '  - status：查看听觉系统完整状态\n' +
+        '  - setup：安装并启动 STT 服务（幂等：已安装则跳过安装，已运行则跳过启动）\n' +
+        '  - listen：开始听（若服务已装但未运行则自动启动，无需手动 setup）\n' +
+        '  - stop：停止听（默认仅停音频捕获，STT 进程保持运行以便下次快速启动）\n' +
+        '  - read：读取转录缓存（支持 since/recent 过滤，clear=true 时读后清空）\n\n' +
+        '听觉模式（listen 时用 mode 指定）：\n' +
         '  - dictation：语音输入 — 用户说完后自动识别为消息发送给你\n' +
-        '  - passive：陪伴监听 — 只缓存转录，你需要用 get_transcript 读取\n' +
+        '  - passive：陪伴监听 — 只缓存转录，你需要用 read 读取（默认）\n' +
         '  - summary：总结模式 — 缓存转录，停止听时自动发送全文请你总结\n\n' +
         '可用模型（越大越准，但越慢越占空间）：\n' +
         '  - tiny：最快，最不准（~75MB）\n' +
@@ -74,52 +73,60 @@ const manageHearingTool: ToolDefinition<ManageHearingParams> = {
         '  - small：较好平衡（~500MB）\n' +
         '  - medium：高精度（~1.5GB）\n' +
         '  - large-v3：最准（~3GB，建议 GPU）\n\n' +
-        '音频源：\n' +
+        '音频源（listen 时用 source 指定）：\n' +
         '  - mic：麦克风（默认）\n' +
         '  - system：系统音频（听视频/播放内容）\n' +
         '  - both：麦克风 + 系统音频\n\n' +
         '【简单规则】\n' +
-        '  用户说 安装听觉/语音识别 → install_and_start\n' +
-        '  用户说 开始听/帮我听 → start_listening（根据意图选 mode）\n' +
-        '  用户说 别听了/停止听 → stop_listening\n' +
-        '  用户说 听一下视频 → start_listening + source=system\n' +
-        '  用户说 你听到了什么 → get_transcript\n' +
-        '  用户问语音识别状态 → status',
+        '  用户说 安装/初始化语音识别   → setup\n' +
+        '  用户说 开始听/帮我听         → listen（根据意图选 mode）\n' +
+        '  用户说 听一下视频            → listen + source=system\n' +
+        '  用户说 别听了/停止听         → stop\n' +
+        '  用户说 关掉语音识别/节省内存 → stop + stop_server=true\n' +
+        '  用户说 你听到了什么          → read\n' +
+        '  用户问语音识别状态           → status',
       parameters: {
         type: 'object',
         properties: {
           action: {
             type: 'string',
-            enum: ['status', 'install', 'start', 'stop', 'install_and_start',
-                   'start_listening', 'stop_listening', 'get_transcript', 'clear_transcript'],
+            enum: ['status', 'setup', 'listen', 'stop', 'read'],
             description: '要执行的操作',
           },
           source: {
             type: 'string',
             enum: ['mic', 'system', 'both'],
-            description: '音频源。start_listening 时指定，默认 mic',
+            description: '音频源。listen 时指定，默认 mic',
           },
           mode: {
             type: 'string',
             enum: ['dictation', 'passive', 'summary'],
-            description: '听觉模式。start_listening 时指定。dictation=语音输入, passive=陪伴监听, summary=总结模式。默认 passive',
+            description: '听觉模式。listen 时指定。dictation=语音输入, passive=陪伴监听, summary=总结模式。默认 passive',
           },
           model: {
             type: 'string',
             enum: ['tiny', 'base', 'small', 'medium', 'large-v3'],
-            description: 'Whisper 模型大小。install_and_start 或 start 时指定，默认 base',
+            description: 'Whisper 模型大小。setup 时指定，默认 base',
           },
           language: {
             type: 'string',
-            description: '识别语言代码，如 zh（中文）、en（英文）、ja（日文）。默认 zh',
+            description: '识别语言代码，如 zh（中文）、en（英文）、ja（日文）。setup 时指定，默认 zh',
+          },
+          stop_server: {
+            type: 'boolean',
+            description: 'stop 时是否同时停止 STT 后台进程。默认 false（仅停止音频捕获，保留服务以便下次快速启动）',
           },
           since: {
             type: 'number',
-            description: 'get_transcript 时使用：只获取此时间戳（毫秒）之后的转录条目',
+            description: 'read 时：只获取此时间戳（毫秒）之后的转录条目',
           },
           recent: {
             type: 'number',
-            description: 'get_transcript 时使用：只获取最近 N 条转录',
+            description: 'read 时：只获取最近 N 条转录',
+          },
+          clear: {
+            type: 'boolean',
+            description: 'read 时：读取后是否清空缓存，默认 false',
           },
         },
         required: ['action'],
@@ -130,14 +137,15 @@ const manageHearingTool: ToolDefinition<ManageHearingParams> = {
   isSkill: true,
 
   async execute(params: ManageHearingParams): Promise<ToolExecuteResult> {
+    const modeLabels: Record<string, string> = {
+      dictation: '语音输入', passive: '陪伴监听', summary: '总结模式',
+    };
+
     switch (params.action) {
       case 'status': {
         const sttStatus = await sttMgr.getStatus();
         const hearingStatus = await hearingManager.getStatus();
         const cfg = sttMgr.getConfig();
-        const modeLabels: Record<string, string> = {
-          dictation: '语音输入', passive: '陪伴监听', summary: '总结模式',
-        };
         const lines = [
           '=== 听觉系统状态 ===',
           `听觉系统: ${hearingStatus.active ? '🟢 运行中' : '⚪ 未启动'}`,
@@ -157,103 +165,94 @@ const manageHearingTool: ToolDefinition<ManageHearingParams> = {
         return lines.join('\n');
       }
 
-      case 'install': {
-        if (params.model) {
-          sttMgr.updateConfig({ model: params.model });
-        }
-        if (params.language) {
-          sttMgr.updateConfig({ language: params.language });
-        }
-        const blockId = `stt-install-${Date.now()}`;
-        sendTerminalBlock({ blockId, title: '安装 STT 环境 (faster-whisper)', status: 'running' });
-        const logs: string[] = [];
-        const result = await sttMgr.install((msg) => {
-          logs.push(msg);
-          sendTerminalBlock({ blockId, line: msg });
-        });
-        sendTerminalBlock({ blockId, status: result.ok ? 'done' : 'error' });
-        return result.ok
-          ? `✅ STT 环境安装成功\n${result.detail}`
-          : `❌ STT 环境安装失败\n${result.detail}`;
-      }
-
-      case 'start': {
+      case 'setup': {
         const config: Partial<sttMgr.STTServerConfig> = {};
         if (params.model) config.model = params.model;
         if (params.language) config.language = params.language;
-        const result = await sttMgr.startServer(Object.keys(config).length > 0 ? config : undefined);
-        return result.ok ? `✅ ${result.detail}` : `❌ ${result.detail}`;
+        if (Object.keys(config).length > 0) {
+          sttMgr.updateConfig(config);
+        }
+
+        const sttStatus = await sttMgr.getStatus();
+
+        // 已安装且已在健康运行，直接返回
+        if (sttStatus.installed && sttStatus.running && sttStatus.healthy) {
+          return '✅ STT 服务已就绪（已安装且运行中）';
+        }
+
+        // 需要安装
+        if (!sttStatus.installed) {
+          const blockId = `stt-setup-${Date.now()}`;
+          sendTerminalBlock({ blockId, title: '安装并启动 STT (faster-whisper)', status: 'running' });
+          const result = await sttMgr.installAndStart((msg) => {
+            sendTerminalBlock({ blockId, line: msg });
+          }, config);
+          sendTerminalBlock({ blockId, status: result.ok ? 'done' : 'error' });
+          if (!result.ok) return `❌ STT 安装失败\n${result.detail}`;
+          return `✅ 听觉系统（STT）安装并启动成功！\n\n${result.detail}`;
+        }
+
+        // 已安装但未运行，直接启动
+        const startResult = await sttMgr.startServer(Object.keys(config).length > 0 ? config : undefined);
+        return startResult.ok
+          ? `✅ STT 服务已启动\n${startResult.detail}`
+          : `❌ STT 服务启动失败\n${startResult.detail}`;
+      }
+
+      case 'listen': {
+        const source = params.source ?? 'mic';
+        const mode = params.mode ?? 'passive';
+
+        const sttStatus = await sttMgr.getStatus();
+
+        if (!sttStatus.installed) {
+          return '❌ STT 服务尚未安装，请先执行 setup 初始化听觉系统。';
+        }
+
+        // 已安装但进程未运行（如重启后），自动拉起
+        if (!sttStatus.running || !sttStatus.healthy) {
+          const startResult = await sttMgr.startServer();
+          if (!startResult.ok) {
+            return `❌ 自动启动 STT 服务失败：${startResult.detail}\n请尝试先执行 setup。`;
+          }
+        }
+
+        const result = await hearingManager.start(source, mode);
+        if (!result.ok) return `❌ ${result.detail}`;
+
+        return [
+          `✅ 听觉系统已激活`,
+          `模式: ${modeLabels[mode] ?? mode}`,
+          `音频源: ${source}`,
+          `STT 地址: ${result.wsUrl}`,
+          '',
+          mode === 'dictation'
+            ? '语音输入模式：用户说的话会自动识别后发送给你。'
+            : mode === 'passive'
+            ? '陪伴监听模式：转录会缓存，你可以用 read 查看用户说了什么。'
+            : '总结模式：转录会持续缓存，停止听后你会收到全部文本用于总结。',
+        ].join('\n');
       }
 
       case 'stop': {
-        // 先停止听觉，再停止 STT 服务
+        const lines: string[] = [];
+
         if (hearingManager.isActive()) {
-          await hearingManager.stop();
-        }
-        const result = await sttMgr.stopServer();
-        return result.ok ? `✅ STT 服务已停止` : `❌ ${result.detail}`;
-      }
-
-      case 'install_and_start': {
-        const config: Partial<sttMgr.STTServerConfig> = {};
-        if (params.model) config.model = params.model;
-        if (params.language) config.language = params.language;
-
-        const blockId = `stt-install-${Date.now()}`;
-        sendTerminalBlock({ blockId, title: '安装并启动 STT (faster-whisper)', status: 'running' });
-
-        const logs: string[] = [];
-        const result = await sttMgr.installAndStart((msg) => {
-          logs.push(msg);
-          sendTerminalBlock({ blockId, line: msg });
-        }, config);
-
-        sendTerminalBlock({ blockId, status: result.ok ? 'done' : 'error' });
-
-        if (result.ok) {
-          return [
-            '✅ 听觉系统（STT）安装并启动成功！',
-            '',
-            result.detail,
-            '',
-            '现在可以使用 start_listening 开始听了。',
-          ].join('\n');
+          const result = await hearingManager.stop();
+          lines.push(result.ok ? '✅ 已停止听' : `❌ 停止音频捕获失败：${result.detail}`);
         } else {
-          return `❌ STT 安装失败\n${result.detail}`;
+          lines.push('ℹ️ 听觉系统本就未在运行');
         }
-      }
 
-      case 'start_listening': {
-        const source = params.source ?? 'mic';
-        const mode = params.mode ?? 'passive';
-        const modeLabels: Record<string, string> = {
-          dictation: '语音输入', passive: '陪伴监听', summary: '总结模式',
-        };
-        const result = await hearingManager.start(source, mode);
-        if (result.ok) {
-          return [
-            `✅ 听觉系统已激活`,
-            `模式: ${modeLabels[mode] ?? mode}`,
-            `音频源: ${source}`,
-            `STT 地址: ${result.wsUrl}`,
-            '',
-            mode === 'dictation'
-              ? '语音输入模式：用户说的话会自动识别后发送给你。'
-              : mode === 'passive'
-              ? '陪伴监听模式：转录会缓存，你可以用 get_transcript 查看用户说了什么。'
-              : '总结模式：转录会持续缓存，停止听后你会收到全部文本用于总结。',
-          ].join('\n');
-        } else {
-          return `❌ ${result.detail}`;
+        if (params.stop_server) {
+          const result = await sttMgr.stopServer();
+          lines.push(result.ok ? '✅ STT 服务已停止' : `❌ STT 服务停止失败：${result.detail}`);
         }
+
+        return lines.join('\n');
       }
 
-      case 'stop_listening': {
-        const result = await hearingManager.stop();
-        return result.ok ? `✅ 已停止听` : `❌ ${result.detail}`;
-      }
-
-      case 'get_transcript': {
+      case 'read': {
         if (!hearingManager.isActive()) {
           return '❌ 听觉系统未运行，没有转录缓存。';
         }
@@ -265,16 +264,15 @@ const manageHearingTool: ToolDefinition<ManageHearingParams> = {
           return '（转录缓存为空，还没有听到任何内容）';
         }
         const lines = [
-          `=== 转录缓存（${transcript.count} 条，模式: ${transcript.mode}） ===`,
+          `=== 转录缓存（${transcript.count} 条，模式: ${modeLabels[transcript.mode] ?? transcript.mode}） ===`,
           '',
           transcript.text,
         ];
+        if (params.clear) {
+          hearingManager.clearTranscript();
+          lines.push('', '（缓存已清空）');
+        }
         return lines.join('\n');
-      }
-
-      case 'clear_transcript': {
-        hearingManager.clearTranscript();
-        return '✅ 转录缓存已清空';
       }
 
       default:
