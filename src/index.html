@@ -14,8 +14,15 @@
       <!-- ===== Live2D 画布区域（可拖动窗口） ===== -->
       <div id="canvas-container" class="drag-region">
         <canvas id="live2d-canvas"></canvas>
-        <!-- 右上角控制按钮（不可拖动） -->
+        <!-- 打字机气泡（仅展示在折叠模式下） -->
+        <div id="typewriter-overlay">
+          <div id="typewriter-text"></div>
+        </div>
+        <!-- 右上角控制按鈕（不可拖动） -->
         <div id="canvas-controls" class="no-drag">
+          <button id="view-mode-btn" class="ctrl-btn" title="半身/全身切换">
+            <span id="view-mode-icon">全</span>
+          </button>
           <button id="pin-btn" class="ctrl-btn" title="置顶/取消置顶">📌</button>
         </div>
       </div>
@@ -82,6 +89,7 @@
 
         <!-- 输入框（折叠时仍显示） -->
         <div id="input-area">
+          <div id="resize-grip" class="no-drag"></div>
           <textarea
             id="message-input"
             placeholder="说点什么..."

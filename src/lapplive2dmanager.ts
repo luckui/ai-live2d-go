@@ -89,6 +89,13 @@ export class LAppLive2DManager {
     }
   }
 
+  /** 半身显示模式（放大聚焦上半身） */
+  private _halfBodyMode = false;
+
+  public setHalfBodyMode(half: boolean): void {
+    this._halfBodyMode = half;
+  }
+
   public onUpdate(): void {
     const { width, height } = this._subdelegate.getCanvas();
     const projection: CubismMatrix44 = new CubismMatrix44();
@@ -101,6 +108,13 @@ export class LAppLive2DManager {
       } else {
         projection.scale(height / width, 1.0);
       }
+
+      if (this._halfBodyMode) {
+        // 半身模式：放大 1.75 倍，向下偏移让上半身（脸/胸）居中
+        projection.scaleRelative(1.75, 1.75);
+        projection.translateRelative(0.0, -0.55);
+      }
+
       if (this._viewMatrix != null) {
         projection.multiplyByMatrix(this._viewMatrix);
       }

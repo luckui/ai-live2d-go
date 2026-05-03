@@ -4,7 +4,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   dragWindow: (deltaX: number, deltaY: number) =>
     ipcRenderer.send('window-drag', { deltaX, deltaY }),
   closeWindow: () => ipcRenderer.send('window-close'),
-  resizeWindow: (height: number) => ipcRenderer.send('window-resize', { height }),
+  resizeWindow: (width: number, height: number) => ipcRenderer.send('window-resize', { width, height }),
   togglePin: () => ipcRenderer.send('window-pin'),
   onPinState: (cb: (pinned: boolean) => void) =>
     ipcRenderer.on('window-pin-state', (_e, pinned) => cb(pinned)),

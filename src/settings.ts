@@ -124,6 +124,8 @@ declare global {
 let cfg: RuntimeConfig | null = null;
 /** 当前表单正在编辑的 provider key */
 let editKey: string | null = null;
+/** 打开设置前的窗口宽度，关闭时恢复 */
+let savedWindowWidth = 0;
 /** 打开设置前的窗口高度，关闭时恢复 */
 let savedWindowHeight = 0;
 
@@ -889,10 +891,11 @@ function setActiveProvider(): void {
 // ── 面板开关 ──────────────────────────────────────────
 
 export function openSettings(): void {
+  savedWindowWidth  = window.innerWidth;
   savedWindowHeight = window.innerHeight;
   // 打开设置时确保窗口足够高（620px）以显示完整表单
   if (savedWindowHeight < 620) {
-    window.electronAPI?.resizeWindow(620);
+    window.electronAPI?.resizeWindow(savedWindowWidth, 620);
   }
   // 暂停 canvas 区域的 Electron 拖拽捕获，否则设置面板上半部分点击会被 OS 拦截
   document.getElementById('canvas-container')?.classList.add('drag-region-suspended');
@@ -915,10 +918,11 @@ export function closeSettings(): void {
   document.getElementById('settings-panel')?.classList.remove('visible');
   // 恢复 canvas 区域的拖拽功能
   document.getElementById('canvas-container')?.classList.remove('drag-region-suspended');
-  // 恢复原始窗口高度
+  // 恢复原始窗口尺寸
   if (savedWindowHeight > 0 && savedWindowHeight < 620) {
-    window.electronAPI?.resizeWindow(savedWindowHeight);
+    window.electronAPI?.resizeWindow(savedWindowWidth, savedWindowHeight);
   }
+  savedWindowWidth  = 0;
   savedWindowHeight = 0;
 }
 

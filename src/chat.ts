@@ -5,6 +5,7 @@
 import { playTTS } from './ttsPlayer';
 import { startCapture, stopCapture, onTranscription } from './hearing';
 import { initLive2DController, extractEmotionTag, triggerEmotion } from './live2dController';
+import { LAppDelegate } from './lappdelegate';
 
 console.log('[Chat] module loaded ✅ (带TTS版本)');
 
@@ -29,7 +30,7 @@ declare global {
     electronAPI?: {
       dragWindow: (dx: number, dy: number) => void;
       closeWindow: () => void;
-      resizeWindow: (height: number) => void;
+      resizeWindow: (width: number, height: number) => void;
       togglePin: () => void;
       onPinState: (cb: (pinned: boolean) => void) => void;
     };
@@ -69,8 +70,64 @@ let currentConversationId: string | null = null;
 let isConvPanelOpen = false;
 let isSending = false;
 
+/** 聊天面板展开状态（模块级，供打字机气泡判断） */
+let _chatExpanded = true;
+/** 半身模式状态（模块级，供 updateChatLayout 计算界面大小） */
+let _halfBody = false;
+/** 窗口缩放比例（用户拖动右下角控制） */
+let _scale = 1.0;
+const BASE_W           = 360;  // 基础窗口宽度
+const BASE_CANVAS_FULL = 360;  // 全身模式下 canvas 局面高度
+const BASE_CANVAS_HALF = 220;  // 半身模式下 canvas 局面高度
+const MIN_SCALE = 0.75;
+const MAX_SCALE = 2.0;
+
 /** 听觉系统实时状态 */
 let hearingTranscriptionCount = 0;
+
+// =====================================================
+// 打字机气泡
+// =====================================================
+
+let _twTimer: ReturnType<typeof setTimeout> | null = null;
+let _twFade: ReturnType<typeof setTimeout> | null = null;
+
+/** 在 Live2D 画布上显示打字机效果气泡。durationMs = 展开全部文字所需毫秒。 */
+function showTypewriterBubble(text: string, durationMs: number): void {
+  const overlay = document.getElementById('typewriter-overlay');
+  const textEl  = document.getElementById('typewriter-text');
+  if (!overlay || !textEl) return;
+
+  // 清除旧定时器
+  if (_twTimer) { clearTimeout(_twTimer); _twTimer = null; }
+  if (_twFade)  { clearTimeout(_twFade);  _twFade  = null; }
+
+  textEl.textContent = '';
+  overlay.classList.add('visible');
+
+  const chars = [...text];  // Unicode 安全拆分
+  if (chars.length === 0) return;
+  const perChar = Math.max(20, durationMs / chars.length);
+
+  let i = 0;
+  const tick = (): void => {
+    if (i < chars.length) {
+      textEl.textContent += chars[i++];
+      _twTimer = setTimeout(tick, perChar);
+    } else {
+      // 全文展示完毕，3s 后淡出
+      _twFade = setTimeout(dismissTypewriterBubble, 3000);
+    }
+  };
+  _twTimer = setTimeout(tick, 0);
+}
+
+function dismissTypewriterBubble(): void {
+  const overlay = document.getElementById('typewriter-overlay');
+  overlay?.classList.remove('visible');
+  if (_twTimer) { clearTimeout(_twTimer); _twTimer = null; }
+  if (_twFade)  { clearTimeout(_twFade);  _twFade  = null; }
+}
 
 // =====================================================
 // 工具函数
@@ -606,7 +663,22 @@ async function autoSendMessage(text: string, type: 'dictation' | 'summary'): Pro
     }
 
     addMessage('ai', displayText, true, result.created_at);
-    playTTS(displayText).catch((e) => console.error('[TTS] playTTS error:', e));
+    // 折叠时显示打字机气泡（TTS 开启时等真实时长，避免二次重播）
+    if (!_chatExpanded) {
+      const ttsEnabled = await window.ttsAPI?.isEnabled().catch(() => false) ?? false;
+      if (!ttsEnabled) showTypewriterBubble(displayText, displayText.length * 60);
+    }
+    playTTS(displayText, (actualMs) => {
+      if (!_chatExpanded) {
+        if (actualMs > 0) {
+          // TTS 解码成功：打字机略快于声音
+          showTypewriterBubble(displayText, Math.max(300, actualMs * 0.92));
+        } else {
+          // TTS 启用但服务器不可达：回退到估算速度
+          showTypewriterBubble(displayText, displayText.length * 60);
+        }
+      }
+    }).catch((e) => console.error('[TTS] playTTS error:', e));
     await refreshConvTitle(currentConversationId);
   } catch (e) {
     typing?.remove();
@@ -682,9 +754,22 @@ async function sendMessage(): Promise<void> {
     const result = await window.chatAPI!.send(currentConversationId, text);
     typing?.remove();
     addMessage('ai', result.content, true, result.created_at);
+    // 折叠时显示打字机气泡（TTS 开启时等真实时长，避免二次重播）
+    if (!_chatExpanded) {
+      const ttsEnabled = await window.ttsAPI?.isEnabled().catch(() => false) ?? false;
+      if (!ttsEnabled) showTypewriterBubble(result.content, result.content.length * 60);
+    }
     // TTS 播放（未启用时静默跳过）
     console.log('[Chat] 准备调用 playTTS, 文本长度:', result.content.length);
-    playTTS(result.content).catch((e) => console.error('[TTS] playTTS 抛出异常:', e));
+    playTTS(result.content, (actualMs) => {
+      if (!_chatExpanded) {
+        if (actualMs > 0) {
+          showTypewriterBubble(result.content, Math.max(300, actualMs * 0.92));
+        } else {
+          showTypewriterBubble(result.content, result.content.length * 60);
+        }
+      }
+    }).catch((e) => console.error('[TTS] playTTS 抛出异常:', e));
     // 首轮发送后 AI 服务会自动重命名对话，刷新 header 标题
     await refreshConvTitle(currentConversationId);
   } catch (e) {
@@ -839,24 +924,64 @@ function toggleConvPanel(): void {
 // 折叠/展开
 // =====================================================
 
+// CSS transition 时长，与 style.css 中 #chat-body 的 transition 保持一致
+const CHAT_BODY_H             = 280;
+const CHAT_BODY_TRANSITION_MS = 350;
+
+/** 设置 canvas-container 高度 CSS 变量（始终用全身高度，半身模式只缩放内容） */
+function setCanvasHeight(): void {
+  const px = Math.round(BASE_CANVAS_FULL * _scale);
+  document.documentElement.style.setProperty('--canvas-h', `${px}px`);
+}
+
+/** 瞬时更新窗口大小（供缩放抓手使用） */
 function updateChatLayout(isExpanded: boolean): void {
-  const chatBody = document.getElementById('chat-body');
+  setCanvasHeight();
+  const headerH   = document.getElementById('chat-header')?.offsetHeight ?? 50;
+  const inputH    = document.getElementById('input-area')?.offsetHeight ?? 54;
+  const chatBodyH = isExpanded ? CHAT_BODY_H : 0;
+  const w = Math.round(BASE_W * _scale);
+  // canvas 按 scale 缩放，header/chatBody/input 保持原始像素
+  const h = Math.round(BASE_CANVAS_FULL * _scale) + headerH + chatBodyH + inputH;
+  window.electronAPI?.resizeWindow(w, h);
+}
+
+/**
+ * 折叠/展开动画。
+ * canvas-container 高度由 CSS var 固定，不参与动画。
+ * chat-body 用 CSS transition 滑入/滑出，窗口在动画结束后调整。
+ * 展开时先扩大窗口（给 chat-body 留空间），收起时等动画完成再缩小。
+ */
+function toggleChatPanel(expanding: boolean): void {
+  const chatBody   = document.getElementById('chat-body');
   const toggleIcon = document.getElementById('toggle-icon');
   if (!chatBody || !toggleIcon) return;
 
-  if (isExpanded) {
-    chatBody.classList.remove('collapsed');
-    toggleIcon.textContent = '▾';
+  setCanvasHeight();
+  const headerH    = document.getElementById('chat-header')?.offsetHeight ?? 50;
+  const inputH     = document.getElementById('input-area')?.offsetHeight ?? 54;
+  const w          = Math.round(BASE_W * _scale);
+  const canvasPx   = Math.round(BASE_CANVAS_FULL * _scale);
+  // canvas 按 scale 缩放，header/input 保持原始像素
+  const collapsedH = canvasPx + headerH + inputH;
+  const expandedH  = canvasPx + headerH + CHAT_BODY_H + inputH;
+
+  if (expanding) {
+    // 先扩大窗口，chat-body 有空间滑入
+    window.electronAPI?.resizeWindow(w, expandedH);
+    requestAnimationFrame(() => {
+      chatBody.classList.remove('collapsed');
+      toggleIcon.textContent = '▾';
+    });
   } else {
+    // 先让 CSS 动画跑完，再缩小窗口
     chatBody.classList.add('collapsed');
     toggleIcon.textContent = '▴';
     closeConvPanel();
+    setTimeout(() => {
+      window.electronAPI?.resizeWindow(w, collapsedH);
+    }, CHAT_BODY_TRANSITION_MS);
   }
-
-  const headerH = document.getElementById('chat-header')?.offsetHeight ?? 50;
-  const inputH = document.getElementById('input-area')?.offsetHeight ?? 54;
-  const bodyH = isExpanded ? 320 : inputH;
-  window.electronAPI?.resizeWindow(360 + headerH + bodyH);
 }
 
 // =====================================================
@@ -904,21 +1029,72 @@ function setupWindowDrag(): void {
 }
 
 // =====================================================
-// 初始化入口
+// 窗口缩放抓柄
 // =====================================================
 
+function setupResizeGrip(): void {
+  const grip = document.getElementById('resize-grip');
+  if (!grip) return;
+
+  let isResizing = false;
+  let startX    = 0;
+  let startScale = 1.0;
+
+  // 用 Pointer Capture 锁定事件：鼠标离开窗口后仍能继续收到 pointermove
+  // 这是缩小时光标跑到窗口外仍能工作的关键
+  grip.addEventListener('pointerdown', (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    isResizing = true;
+    startX     = e.screenX;
+    startScale = _scale;
+    grip.setPointerCapture(e.pointerId);
+
+  });
+
+  grip.addEventListener('pointermove', (e) => {
+    if (!isResizing) return;
+    const delta = (e.screenX - startX) / 250;
+    const newScale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, startScale + delta));
+
+    _scale = newScale;
+    updateChatLayout(_chatExpanded);
+  });
+
+  grip.addEventListener('pointerup', () => { isResizing = false; });
+  grip.addEventListener('pointercancel', () => { isResizing = false; });
+}
+
+// =====================================================
+// 初始化入口
+// =====================================================
 export async function initChat(): Promise<void> {
   setupWindowDrag();
+  setupResizeGrip();
+
+  // 等 DOM layout 完成后再修正窗口尺寸，确保 offsetHeight 可读
+  requestAnimationFrame(() => {
+    updateChatLayout(_chatExpanded);
+  });
 
   // 初始化 Live2D IPC 控制器（接收主进程情绪/动作命令）
   initLive2DController();
 
   // 折叠/展开
-  let isExpanded = true;
   document.getElementById('toggle-chat-btn')?.addEventListener('click', (e) => {
     e.stopPropagation();
-    isExpanded = !isExpanded;
-    updateChatLayout(isExpanded);
+    _chatExpanded = !_chatExpanded;
+    if (_chatExpanded) dismissTypewriterBubble();
+    toggleChatPanel(_chatExpanded);
+  });
+
+  // 半身/全身切换：只改变 Live2D 渲染层，窗口/canvas 尺寸不变
+  document.getElementById('view-mode-btn')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    _halfBody = !_halfBody;
+    const icon = document.getElementById('view-mode-icon');
+    if (icon) icon.textContent = _halfBody ? '半' : '全';
+    LAppDelegate.getInstance().getFirstSubdelegate()?.getLive2DManager().setHalfBodyMode(_halfBody);
   });
 
   // 关闭窗口

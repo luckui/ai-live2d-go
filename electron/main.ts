@@ -289,7 +289,6 @@ function createWindow(): void {
     transparent: true,
     frame: false,
     alwaysOnTop: true,
-    resizable: false,
     hasShadow: false,
     backgroundColor: '#00000000',
     webPreferences: {
@@ -349,8 +348,9 @@ function createWindow(): void {
 
   ipcMain.on('window-close', () => app.quit());
 
-  ipcMain.on('window-resize', (_e, { height: h }: { height: number }) => {
-    win.setSize(360, h);
+  ipcMain.on('window-resize', (_e, { width: w, height: h }: { width: number; height: number }) => {
+    const bounds = win.getBounds();
+    win.setBounds({ x: bounds.x, y: bounds.y, width: w, height: h });
   });
 
   // ── 对话管理 ──────────────────────────────────────────────
@@ -784,6 +784,19 @@ app.whenReady().then(() => {
 
   // 启动时激活 TTS provider（默认 enabled=false，不会连接）
   activateTTSProvider();
+
+  // 若 TTS 已启用且为本地服务，后台静默拉起（重启后无需用户手动 enable）
+  if (ttsConfig.enabled) {
+    const activeP = ttsConfig.providers[ttsConfig.activeProvider];
+    if (activeP?.isLocal && activeP.localEngine) {
+      ttsServerManager.getStatus(activeP.localEngine).then((status) => {
+        if (status.installed && !status.running) {
+          console.info(`[TTS] 启动时自动拉起本地服务: ${activeP.localEngine}`);
+          return ttsServerManager.startServer(activeP.localEngine);
+        }
+      }).catch((e) => console.warn('[TTS] 启动时自动拉起失败（忽略）:', (e as Error).message));
+    }
+  }
 
   createWindow();
 

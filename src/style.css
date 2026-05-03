@@ -89,8 +89,8 @@
 }
 
 html, body {
-  width: 360px;
-  height: 620px;
+  width: 100%;
+  height: 100%;
   overflow: hidden;
   background: transparent !important;
   font-family: var(--font);
@@ -100,8 +100,8 @@ html, body {
    主容器
 ======================================================== */
 #app {
-  width: 360px;
-  height: 620px;
+  width: 100%;
+  height: 100%;
   display: flex;
   flex-direction: column;
   background: transparent;
@@ -112,7 +112,8 @@ html, body {
    Live2D 画布区域
 ======================================================== */
 #canvas-container {
-  flex: 1;
+  flex: none;
+  height: var(--canvas-h, 360px);
   position: relative;
   background: transparent;
   overflow: hidden;
@@ -148,6 +149,68 @@ html, body {
 }
 
 #canvas-container:hover #canvas-controls {
+  opacity: 1;
+}
+
+/* ===== 打字机气泡 ===== */
+#typewriter-overlay {
+  position: absolute;
+  bottom: 18px;
+  left: 14px;
+  right: 14px;
+  background: rgba(255, 255, 255, 0.82);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border-radius: 16px;
+  padding: 12px 16px 14px;
+  font-size: 13.5px;
+  line-height: 1.65;
+  color: #333;
+  max-height: 38%;
+  overflow: hidden;
+  box-shadow: 0 4px 24px rgba(200, 80, 120, 0.2);
+  border: 1px solid rgba(245, 87, 108, 0.18);
+  pointer-events: none;
+  z-index: 5;
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+#typewriter-overlay.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+#typewriter-text {
+  word-break: break-all;
+  white-space: pre-wrap;
+}
+
+/* view-mode 按钮文字缩小 */
+#view-mode-btn {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: -0.5px;
+}
+
+/* ===== 窗口缩放抓柄 ===== */
+#resize-grip {
+  position: absolute;
+  bottom: 0;
+  right: 0;
+  pointer-events: all;
+  width: 18px;
+  height: 18px;
+  cursor: nwse-resize;
+  z-index: 10000;
+  opacity: 0;
+  transition: opacity 0.2s;
+  /* 三条斜线装饰 */
+  background:
+    linear-gradient(135deg, transparent 40%, rgba(200,80,120,0.55) 40%, rgba(200,80,120,0.55) 50%, transparent 50%),
+    linear-gradient(135deg, transparent 55%, rgba(200,80,120,0.55) 55%, rgba(200,80,120,0.55) 65%, transparent 65%),
+    linear-gradient(135deg, transparent 70%, rgba(200,80,120,0.55) 70%, rgba(200,80,120,0.55) 80%, transparent 80%);
+}
+#app:hover #resize-grip {
   opacity: 1;
 }
 
@@ -191,7 +254,7 @@ html, body {
    聊天面板
 ======================================================== */
 #chat-panel {
-  width: 360px;
+  width: 100%;
   background: var(--chat-glass);
   backdrop-filter: blur(24px);
   -webkit-backdrop-filter: blur(24px);
