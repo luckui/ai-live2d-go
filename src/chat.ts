@@ -4,7 +4,7 @@
 
 import { playTTS } from './ttsPlayer';
 import { startCapture, stopCapture, onTranscription } from './hearing';
-import { initLive2DController, extractEmotionTag, triggerEmotion } from './live2dController';
+import { initLive2DController, extractEmotionTag, triggerEmotion, notifyInteraction } from './live2dController';
 import { LAppDelegate } from './lappdelegate';
 
 console.log('[Chat] module loaded ✅ (带TTS版本)');
@@ -71,7 +71,7 @@ let isConvPanelOpen = false;
 let isSending = false;
 
 /** 聊天面板展开状态（模块级，供打字机气泡判断） */
-let _chatExpanded = true;
+let _chatExpanded = false;
 /** 半身模式状态（模块级，供 updateChatLayout 计算界面大小） */
 let _halfBody = false;
 /** 窗口缩放比例（用户拖动右下角控制） */
@@ -635,6 +635,9 @@ async function autoSendMessage(text: string, type: 'dictation' | 'summary'): Pro
   if (!currentConversationId) return;
   if (isSending) return; // 不打断正在进行的对话
 
+  // 语音输入 = 用户交互，重置 bored 计时器
+  notifyInteraction();
+
   const content = type === 'summary'
     ? `请帮我总结以下听到的内容：\n\n${text}`
     : text;
@@ -659,7 +662,8 @@ async function autoSendMessage(text: string, type: 'dictation' | 'summary'): Pro
     // 自动解析 AI 回复中的情绪标签 [emotion:xxx]
     const { emotion, cleaned: displayText } = extractEmotionTag(result.content);
     if (emotion) {
-      triggerEmotion(emotion, 6000, true); // 持续 6 秒后自动复位
+      // 通过状态机触发：表情+对应情绪动作，SPEAKING 状态下仅改表情不打断动作
+      triggerEmotion(emotion);
     }
 
     addMessage('ai', displayText, true, result.created_at);
@@ -734,6 +738,9 @@ async function sendMessage(): Promise<void> {
   const text = input?.value.trim();
   if (!text) return;
 
+  // 用户发送消息：通知状态机退出 BORED，重置无聊计时器
+  notifyInteraction();
+
   input.value = '';
   isSending = true;
   isStopMode = true;
@@ -753,20 +760,27 @@ async function sendMessage(): Promise<void> {
   try {
     const result = await window.chatAPI!.send(currentConversationId, text);
     typing?.remove();
-    addMessage('ai', result.content, true, result.created_at);
+
+    // 与 autoSendMessage 保持一致：通过状态机触发情绪+动作
+    const { emotion: sendEmotion, cleaned: sendDisplayText } = extractEmotionTag(result.content);
+    if (sendEmotion) {
+      triggerEmotion(sendEmotion);
+    }
+
+    addMessage('ai', sendDisplayText, true, result.created_at);
     // 折叠时显示打字机气泡（TTS 开启时等真实时长，避免二次重播）
     if (!_chatExpanded) {
       const ttsEnabled = await window.ttsAPI?.isEnabled().catch(() => false) ?? false;
-      if (!ttsEnabled) showTypewriterBubble(result.content, result.content.length * 60);
+      if (!ttsEnabled) showTypewriterBubble(sendDisplayText, sendDisplayText.length * 60);
     }
     // TTS 播放（未启用时静默跳过）
-    console.log('[Chat] 准备调用 playTTS, 文本长度:', result.content.length);
-    playTTS(result.content, (actualMs) => {
+    console.log('[Chat] 准备调用 playTTS, 文本长度:', sendDisplayText.length);
+    playTTS(sendDisplayText, (actualMs) => {
       if (!_chatExpanded) {
         if (actualMs > 0) {
-          showTypewriterBubble(result.content, Math.max(300, actualMs * 0.92));
+          showTypewriterBubble(sendDisplayText, Math.max(300, actualMs * 0.92));
         } else {
-          showTypewriterBubble(result.content, result.content.length * 60);
+          showTypewriterBubble(sendDisplayText, sendDisplayText.length * 60);
         }
       }
     }).catch((e) => console.error('[TTS] playTTS 抛出异常:', e));
@@ -1074,6 +1088,12 @@ export async function initChat(): Promise<void> {
 
   // 等 DOM layout 完成后再修正窗口尺寸，确保 offsetHeight 可读
   requestAnimationFrame(() => {
+    // 默认折叠：同步 DOM 初始状态
+    if (!_chatExpanded) {
+      document.getElementById('chat-body')?.classList.add('collapsed');
+      const icon = document.getElementById('toggle-icon');
+      if (icon) icon.textContent = '▴';
+    }
     updateChatLayout(_chatExpanded);
   });
 
@@ -1197,6 +1217,21 @@ export async function initChat(): Promise<void> {
     }
   });
   input?.addEventListener('mousedown', (e) => e.stopPropagation());
+
+  // 监听 input-area 高度变化，动态调整 Electron 窗口高度
+  // 这样 textarea 多行时窗口向下扩展，不影响 canvas 位置也不破坏折叠动画
+  const inputAreaEl = document.getElementById('input-area');
+  if (inputAreaEl && typeof ResizeObserver !== 'undefined') {
+    let _prevInputH = inputAreaEl.offsetHeight;
+    const _inputRO = new ResizeObserver(() => {
+      const newH = inputAreaEl.offsetHeight;
+      if (newH !== _prevInputH) {
+        _prevInputH = newH;
+        updateChatLayout(_chatExpanded);
+      }
+    });
+    _inputRO.observe(inputAreaEl);
+  }
 
   // 加载或创建初始对话
   const convs = await window.chatAPI!.listConversations();

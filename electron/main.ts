@@ -350,7 +350,10 @@ function createWindow(): void {
 
   ipcMain.on('window-resize', (_e, { width: w, height: h }: { width: number; height: number }) => {
     const bounds = win.getBounds();
-    win.setBounds({ x: bounds.x, y: bounds.y, width: w, height: h });
+    const { height: screenH } = screen.getPrimaryDisplay().workAreaSize;
+    // 钳位 y：确保窗口扩展后不超出屏幕底部（保留 6px 间距）
+    const clampedY = Math.min(bounds.y, screenH - h - 6);
+    win.setBounds({ x: bounds.x, y: Math.max(0, clampedY), width: w, height: h });
   });
 
   // ── 对话管理 ──────────────────────────────────────────────

@@ -33,17 +33,34 @@
       {
         "from": "tts-server",
         "to": "tts-server",
-        "filter": ["**/*", "!.venv/**", "!__pycache__/**", "!.server.pid"]
+        "filter": [
+          "**/*",
+          "!.venv/**",
+          "!__pycache__/**",
+          "!.server.pid"
+        ]
       },
       {
         "from": "tts-server-nano",
         "to": "tts-server-nano",
-        "filter": ["**/*", "!.venv/**", "!__pycache__/**", "!.server.pid", "!models/**", "!generated_audio/**"]
+        "filter": [
+          "**/*",
+          "!.venv/**",
+          "!__pycache__/**",
+          "!.server.pid",
+          "!models/**",
+          "!generated_audio/**"
+        ]
       },
       {
         "from": "stt-server",
         "to": "stt-server",
-        "filter": ["**/*", "!.venv/**", "!__pycache__/**", "!.server.pid"]
+        "filter": [
+          "**/*",
+          "!.venv/**",
+          "!__pycache__/**",
+          "!.server.pid"
+        ]
       }
     ],
     "files": [
@@ -81,6 +98,7 @@
     "vite-plugin-cesium": "^1.2.23"
   },
   "dependencies": {
+    "@nekopaw/tempora": "^0.4.0-alpha.1",
     "@nut-tree-fork/nut-js": "^4.2.6",
     "@types/qrcode": "^1.5.6",
     "better-sqlite3": "^12.8.0",

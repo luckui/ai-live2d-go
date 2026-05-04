@@ -46,59 +46,177 @@ import { LAppDelegate } from './lappdelegate';
 import { LAppSubdelegate } from './lappsubdelegate';
 
 // ── 情绪预设参数表（Hiyori_pro 无 exp3，用直接参数注入实现情绪）──────────────
+// 参数来源：hiyori_pro_t11.cdi3.json 确认存在的参数 ID
+// 分层原则（参考 airi-main expression-controller）：
+//   · 此处参数均不含 ParamMouthOpenY —— 口型由 TTS 口型同步层独立控制
+//   · 表情层在 motion 更新之后、model.update() 之前执行，用 setParameterValueById 覆写
 export const EMOTION_PRESETS: Record<string, Record<string, number>> = {
   neutral: {
-    ParamMouthForm:  0,
-    ParamBrowLY:     0,   ParamBrowRY:     0,
-    ParamBrowLAngle: 0,   ParamBrowRAngle: 0,
-    ParamCheek:      0,
+    ParamMouthForm:   0,
+    ParamBrowLY:      0,    ParamBrowRY:      0,
+    ParamBrowLAngle:  0,    ParamBrowRAngle:  0,
+    ParamBrowLForm:   0,    ParamBrowRForm:   0,
+    ParamEyeLSmile:   0,    ParamEyeRSmile:   0,
+    ParamCheek:       0,
   },
   happy: {
-    ParamMouthForm:  1.0,
-    ParamBrowLY:     0.5, ParamBrowRY:     0.5,
-    ParamBrowLAngle: 0,   ParamBrowRAngle: 0,
-    ParamCheek:      0.5,
+    // 开心：嘴角上扬 + 眉毛上抬 + 眼睛笑形 + 淡淡腮红
+    ParamMouthForm:   1.0,
+    ParamBrowLY:      0.5,  ParamBrowRY:      0.5,
+    ParamBrowLAngle:  0,    ParamBrowRAngle:  0,
+    ParamBrowLForm:   0.3,  ParamBrowRForm:   0.3,
+    ParamEyeLSmile:   1.0,  ParamEyeRSmile:   1.0,
+    ParamCheek:       0.4,
   },
   sad: {
+    // 悲伤：嘴角下垂 + 眉毛倾斜（八字眉）+ 眼睛无笑意
     ParamMouthForm:  -0.8,
-    ParamBrowLY:    -0.3, ParamBrowRY:    -0.3,
-    ParamBrowLAngle:-1.0, ParamBrowRAngle:-1.0,
-    ParamCheek:      0,
+    ParamBrowLY:     -0.3,  ParamBrowRY:     -0.3,
+    ParamBrowLAngle: -1.0,  ParamBrowRAngle: -1.0,
+    ParamBrowLForm:  -0.5,  ParamBrowRForm:  -0.5,
+    ParamEyeLSmile:   0,    ParamEyeRSmile:   0,
+    ParamCheek:       0,
   },
   angry: {
+    // 愤怒：嘴角轻压 + 眉毛压下 + 眉形皱起
     ParamMouthForm:  -0.5,
-    ParamBrowLY:    -0.5, ParamBrowRY:    -0.5,
-    ParamBrowLAngle: 1.0, ParamBrowRAngle: 1.0,
-    ParamCheek:      0,
+    ParamBrowLY:     -0.6,  ParamBrowRY:     -0.6,
+    ParamBrowLAngle:  1.0,  ParamBrowRAngle:  1.0,
+    ParamBrowLForm:  -0.8,  ParamBrowRForm:  -0.8,
+    ParamEyeLSmile:   0,    ParamEyeRSmile:   0,
+    ParamCheek:       0,
   },
   surprised: {
-    ParamMouthForm:  0.3,
-    ParamBrowLY:     1.0, ParamBrowRY:     1.0,
-    ParamBrowLAngle: 0,   ParamBrowRAngle: 0,
-    ParamCheek:      0,
+    // 惊讶：嘴微张形 + 眉毛高扬 + 眼睛睁大（默认眼开量由 motion 控制，此处不重写）
+    ParamMouthForm:   0.3,
+    ParamBrowLY:      1.0,  ParamBrowRY:      1.0,
+    ParamBrowLAngle:  0,    ParamBrowRAngle:  0,
+    ParamBrowLForm:   0,    ParamBrowRForm:   0,
+    ParamEyeLSmile:   0,    ParamEyeRSmile:   0,
+    ParamCheek:       0,
   },
   thinking: {
+    // 思考：嘴角轻压 + 左眉微蹙 + 右眉微降（不对称）
     ParamMouthForm:  -0.2,
-    ParamBrowLY:     0.3, ParamBrowRY:    -0.2,
-    ParamBrowLAngle: 0.5, ParamBrowRAngle:-0.3,
-    ParamCheek:      0,
+    ParamBrowLY:      0.3,  ParamBrowRY:     -0.2,
+    ParamBrowLAngle:  0.5,  ParamBrowRAngle: -0.3,
+    ParamBrowLForm:   0.3,  ParamBrowRForm:  -0.2,
+    ParamEyeLSmile:   0,    ParamEyeRSmile:   0,
+    ParamCheek:       0,
   },
   shy: {
-    ParamMouthForm:  0.6,
-    ParamBrowLY:     0.5, ParamBrowRY:     0.5,
-    ParamBrowLAngle: 0,   ParamBrowRAngle: 0,
-    ParamCheek:      0.8,
+    // 害羞：嘴角微扬 + 眉毛上抬 + 眼睛半笑形 + 强腮红
+    ParamMouthForm:   0.6,
+    ParamBrowLY:      0.5,  ParamBrowRY:      0.5,
+    ParamBrowLAngle:  0,    ParamBrowRAngle:  0,
+    ParamBrowLForm:   0.2,  ParamBrowRForm:   0.2,
+    ParamEyeLSmile:   0.5,  ParamEyeRSmile:   0.5,
+    ParamCheek:       1.0,
   },
   embarrassed: {
-    ParamMouthForm:  0.2,
-    ParamBrowLY:     0.2, ParamBrowRY:     0.2,
-    ParamBrowLAngle:-0.5, ParamBrowRAngle:-0.5,
-    ParamCheek:      1.0,
+    // 尴尬：嘴角轻扬 + 眉毛微压 + 腮红最强
+    ParamMouthForm:   0.2,
+    ParamBrowLY:      0.2,  ParamBrowRY:      0.2,
+    ParamBrowLAngle: -0.5,  ParamBrowRAngle: -0.5,
+    ParamBrowLForm:  -0.3,  ParamBrowRForm:  -0.3,
+    ParamEyeLSmile:   0.3,  ParamEyeRSmile:   0.3,
+    ParamCheek:       1.0,
   },
 };
 
 /** neutral 复位参数 */
 const EMOTION_NEUTRAL_PARAMS = EMOTION_PRESETS.neutral;
+
+// ── 行为状态机 ──────────────────────────────────────────────────────────────
+// 参考 airi-main 的 motion-manager 插件分层思路，但针对原生 SDK 实现
+//
+//   IDLE_CALM   →（超时 60 s）→  IDLE_BORED
+//   IDLE_*      →（情绪触发）  →  REACTING
+//   IDLE_*      →（TTS 开始）  →  SPEAKING
+//   REACTING    →（动作播完）  →  IDLE_CALM
+//   SPEAKING    →（TTS 结束）  →  POST_SPEAK（保持当前表情 2 s 再淡出）
+//   POST_SPEAK  →（计时器到）  →  IDLE_CALM
+//   任何状态    →（收到消息）  →  IDLE_CALM（重置 bored 计时器）
+//
+enum AvatarState {
+  IDLE_CALM,    // 平静待机，随机 Idle 动作
+  IDLE_BORED,   // 无聊，60 s 无交互后进入
+  REACTING,     // 情绪响应，播一次情绪动作后回到 IDLE_CALM
+  SPEAKING,     // TTS 播放中，循环 Tap/Flick
+  POST_SPEAK,   // TTS 刚结束，保持表情余韵
+}
+
+// ── 情绪对应的动作组（Hiyori_pro 语义映射）────────────────────────────────
+const EMOTION_TO_MOTION_GROUP: Record<string, string> = {
+  happy:       'Tap',
+  surprised:   'Flick',
+  sad:         'FlickDown',
+  angry:       'FlickUp',
+  shy:         'Tap@Body',
+  embarrassed: 'Tap@Body',
+  thinking:    'Idle',
+  neutral:     'Idle',
+};
+
+// ── 情绪持续时长建议表（毫秒）──────────────────────────────────────────────
+// 原则：惊讶短（瞬间性），快乐/思考中等，悲伤/害羞长（余味绵长）
+export const EMOTION_DURATION_MS: Record<string, number> = {
+  happy:       4000,
+  surprised:   1800,
+  sad:         8000,
+  angry:       3000,
+  thinking:    0,     // 持续到下一个情绪（TTS 回复前整段思考期）
+  shy:         6000,
+  embarrassed: 6000,
+  neutral:     0,     // 永久
+};
+
+// ── Beat-Sync 弹簧物理（移植自 airi-main beat-sync.ts）─────────────────────
+// ── Beat-Sync 弹簧物理（精确复刻 airi-main）────────────────────────────────
+// 原理：pre-stage 运行，读模型参数当前值作为弹簧位置，驱动到 beat 目标，
+//       用 setParameterValueById 绝对覆写。随后 motion add 在上面叠加。
+//       弹簧会「对抗」motion 的拉力，最终收敛使 finalAngleY ≈ beatTarget，
+//       与 motion 幅度无关。stiffness=120 / damping=16 与 airi-main 一致。
+// 轴：AngleY（左右转头，节拍感最强）+ AngleZ（头部侧倾，立体感）
+interface BeatSyncState {
+  targetY:   number;   // 当前分段目标（绝对值，如 ±10）
+  targetZ:   number;
+  velocityX: number;   // AngleX 弹簧速度（目标始终为 0，起稳定器作用，与 airi 一致）
+  velocityY: number;   // 弹簧速度（spring pos 直接从模型读，不单独存储）
+  velocityZ: number;
+  primed:    boolean;
+  lastBeatMs: number;
+  segments:  BeatSegment[];
+  topSide:   'left' | 'right';
+  patternStarted: boolean;
+  style:     BeatStyleName;
+  avgIntervalMs: number | null;
+}
+
+interface BeatSegment {
+  startMs:  number;
+  duration: number;
+  fromY: number; fromZ: number;
+  toY:   number; toZ:   number;
+}
+
+type BeatStyleName = 'punchy-v' | 'balanced-v' | 'swing-lr' | 'sway-sine';
+
+interface BeatStyleConfig {
+  topYaw:    number;   // AngleY 幅度（左右转头，绝对值，如 10 → 目标 ±10）
+  topRoll:   number;   // AngleZ 幅度（头部侧倾）
+  bottomDip: number;   // V 型底部 AngleZ 下沉量
+  swingLift?: number;
+  pattern:   'v' | 'swing' | 'sway';
+}
+
+// 与 airi-main defaultStyles 完全一致
+const BEAT_STYLES: Record<BeatStyleName, BeatStyleConfig> = {
+  'punchy-v':   { topYaw: 10, topRoll: 8,  bottomDip: 4, pattern: 'v'     },
+  'balanced-v': { topYaw: 6,  topRoll: 0,  bottomDip: 6, pattern: 'v'     },
+  'swing-lr':   { topYaw: 8,  topRoll: 0,  bottomDip: 6, swingLift: 8,  pattern: 'swing' },
+  'sway-sine':  { topYaw: 10, topRoll: 0,  bottomDip: 0, swingLift: 10, pattern: 'sway'  },
+};
 
 enum LoadStep {
   LoadAssets,
@@ -564,16 +682,66 @@ export class LAppModel extends CubismUserModel {
     let motionUpdated = false;
 
     //--------------------------------------------------------------------------
+    // ── 行为状态机：更新计时器 ──────────────────────────────────────────────
+    this._avatarIdleElapsedSec += deltaTimeSeconds;
+
+    // BORED 判断：60 s 无任何交互
+    if (
+      this._avatarState === AvatarState.IDLE_CALM &&
+      this._avatarIdleElapsedSec > LAppModel.BORED_THRESHOLD_SEC
+    ) {
+      this._avatarState = AvatarState.IDLE_BORED;
+    }
+
+    // POST_SPEAK 计时器
+    if (this._avatarState === AvatarState.POST_SPEAK) {
+      this._postSpeakElapsedSec += deltaTimeSeconds;
+      if (this._postSpeakElapsedSec >= LAppModel.POST_SPEAK_LINGER_SEC) {
+        this._avatarState = AvatarState.IDLE_CALM;
+        this._postSpeakElapsedSec = 0;
+        // 表情淡出到 neutral
+        this.setEmotionParams(EMOTION_NEUTRAL_PARAMS, 500, 0);
+      }
+    }
+
     this._model.loadParameters(); // 前回セーブされた状態をロード
+
+    // ── Beat-Sync PRE-STAGE（与 airi useMotionUpdatePluginBeatSync 完全一致）
+    // 在 motion 运行之前：读模型当前参数值→弹簧积分→setParameterValueById 绝对覆写。
+    // motion 随后叠加其曲线；弹簧通过对抗 motion 的拉力，使最终角度收敛到 beatTarget。
+    this._updateBeatSync(deltaTimeSeconds);
+
     if (this._motionManager.isFinished()) {
-      if (this._isSpeaking) {
-        // TTS 播放中：循环说话动作（Tap / Flick），让角色看起来在生动地讲话
-        const groups = LAppModel.SPEAKING_GROUPS;
-        const group = groups[Math.floor(Math.random() * groups.length)];
-        this.startRandomMotion(group, LAppDefine.PriorityIdle);
-      } else {
-        // モーションの再生がない場合、待機モーションの中からランダムで再生する
-        this.startRandomMotion(this._idleGroup, LAppDefine.PriorityIdle);
+      // ── 各状态下选择下一个动作 ─────────────────────────────────────────
+      switch (this._avatarState) {
+        case AvatarState.SPEAKING: {
+          // 与 airi 完全一致：说话时继续循环 Idle，为身体提供自然动态基线。
+          // beat-sync pre-stage 已经驱动头部节拍，motion 和 beat-sync 天然共存——
+          // motion 添加曲线值，beat-sync 弹簧对抗后收敛到 beatTarget，互不干扰。
+          this.startRandomMotion(this._idleGroup, LAppDefine.PriorityIdle);
+          break;
+        }
+        case AvatarState.REACTING: {
+          // 情绪动作已播完 → 回到平静待机
+          this._avatarState = AvatarState.IDLE_CALM;
+          this.startRandomMotion(this._idleGroup, LAppDefine.PriorityIdle);
+          break;
+        }
+        case AvatarState.IDLE_BORED: {
+          // 无聊：偶尔做一个 FlickDown（叹气感），更多时候还是 Idle
+          const boredRoll = Math.random();
+          if (boredRoll < 0.25) {
+            this.startRandomMotion('FlickDown', LAppDefine.PriorityIdle);
+          } else {
+            this.startRandomMotion(this._idleGroup, LAppDefine.PriorityIdle);
+          }
+          break;
+        }
+        case AvatarState.POST_SPEAK:
+        case AvatarState.IDLE_CALM:
+        default:
+          this.startRandomMotion(this._idleGroup, LAppDefine.PriorityIdle);
+          break;
       }
     } else {
       motionUpdated = this._motionManager.updateMotion(
@@ -620,6 +788,8 @@ export class LAppModel extends CubismUserModel {
       this._breath.updateParameters(this._model, deltaTimeSeconds);
     }
 
+    // ── Beat-Sync：已在 loadParameters 之后的 pre-stage 完成，此处无需重复 ──
+
     // 物理演算の設定
     if (this._physics != null) {
       this._physics.evaluate(this._model, deltaTimeSeconds);
@@ -627,19 +797,24 @@ export class LAppModel extends CubismUserModel {
 
     // リップシンクの設定
     if (this._lipsync) {
-      let value = 0.0; // リアルタイムでリップシンクを行う場合、システムから音量を取得して、0~1の範囲で値を入力します。
+      let value = 0.0;
 
       // 外部 WebAudio RMS（TTS リアルタイム口型）が利用可能なら優先使用
       const externalMouth = (window as any)._live2dMouthOpen as number | undefined;
       if (typeof externalMouth === 'number' && externalMouth > 0) {
         value = externalMouth;
+        // TTS 播放时用 set（覆盖）：确保 TTS 完全接管嘴巴控制权，
+        // 防止动作动画的嘴巴曲线叠加导致口型异常（参考 airi-main 的分层设计）
+        for (let i = 0; i < this._lipSyncIds.getSize(); ++i) {
+          this._model.setParameterValueById(this._lipSyncIds.at(i), value);
+        }
       } else {
         this._wavFileHandler.update(deltaTimeSeconds);
         value = this._wavFileHandler.getRms();
-      }
-
-      for (let i = 0; i < this._lipSyncIds.getSize(); ++i) {
-        this._model.addParameterValueById(this._lipSyncIds.at(i), value, 0.8);
+        // 非 TTS 时用 add（叠加）：与待机动作自然混合
+        for (let i = 0; i < this._lipSyncIds.getSize(); ++i) {
+          this._model.addParameterValueById(this._lipSyncIds.at(i), value, 0.8);
+        }
       }
     }
 
@@ -773,24 +948,303 @@ export class LAppModel extends CubismUserModel {
     );
   }
 
-  // ── 说话状态（TTS 播放期间切换为说话动作循环）─────────────────────────
+  // ── 行为状态机字段 ─────────────────────────────────────────────────────────
 
-  /** TTS 正在播放时为 true，切换 isFinished 时的动作组 */
-  private _isSpeaking = false;
-  /** 说话时随机循环的动作组（Tap 权重 2x，偶尔 Flick 增加变化感） */
-  private static readonly SPEAKING_GROUPS = ['Tap', 'Tap', 'Flick'] as const;
+  /** 当前行为状态 */
+  private _avatarState: AvatarState = AvatarState.IDLE_CALM;
+  /** 无交互计时（秒），用于判断进入 BORED */
+  private _avatarIdleElapsedSec = 0;
+  /** POST_SPEAK 余韵计时（秒） */
+  private _postSpeakElapsedSec = 0;
+  /** 当前情绪名称（供状态机查表） */
+  private _currentEmotion = 'neutral';
+
+  /** 无聊阈值：60 秒无交互 */
+  private static readonly BORED_THRESHOLD_SEC = 60;
+  /** POST_SPEAK 余韵时长：2 秒 */
+  private static readonly POST_SPEAK_LINGER_SEC = 2;
+  /**
+   * 说话时动作循环池（shuffle 队列消费，Idle 作为手势间的自然休息帧）。
+   * 不使用纯随机，防止同一手势连续重复出现的刻板感。
+   * 参考 airi-main：说话节奏由 beat-sync 头部摆动表达，身体动作只需提供自然变化感。
+   */
+  private static readonly SPEAKING_GROUPS_POOL = [
+    'Tap', 'Idle', 'Flick', 'Idle', 'Tap@Body', 'Idle',
+  ] as const;
+  /** 当前 shuffle 后的动作队列（空时自动重新 shuffle） */
+  private _speakingQueue: string[] = [];
+  /** 上次消费的动作组（防止两个 shuffle 周期首尾相同） */
+  private _lastSpeakGroup = '';
 
   /**
-   * 设置 TTS 讲话状态。
-   * - true：立即用 Tap 动作打断当前 Idle，后续动作循环使用 Tap/Flick
-   * - false：下次 isFinished 时自然恢复到 Idle 循环
+   * 从 shuffle 队列取下一个说话动作组。
+   * 队列空时重新 Fisher-Yates shuffle，并保证队首不与上次队尾相同。
+   * 这样一个完整周期内所有组各出现一次，且不会出现连续同组。
+   */
+  private _nextSpeakingGroup(): string {
+    if (this._speakingQueue.length === 0) {
+      // Fisher-Yates shuffle
+      const pool: string[] = [...LAppModel.SPEAKING_GROUPS_POOL];
+      for (let i = pool.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        const tmp = pool[i]; pool[i] = pool[j]; pool[j] = tmp;
+      }
+      // 若 shuffle 后队首与上次队尾相同，把队首与随机非首位交换
+      if (pool.length > 1 && pool[0] === this._lastSpeakGroup) {
+        const swapIdx = 1 + Math.floor(Math.random() * (pool.length - 1));
+        const tmp = pool[0]; pool[0] = pool[swapIdx]; pool[swapIdx] = tmp;
+      }
+      this._speakingQueue = pool;
+    }
+    const group = this._speakingQueue.shift()!;
+    this._lastSpeakGroup = group;
+    return group;
+  }
+
+  // ── Beat-Sync 状态（弹簧物理，移植自 airi-main）──────────────────────────
+
+  private _beatSync: BeatSyncState = {
+    targetY: 0, targetZ: 0,
+    velocityX: 0, velocityY: 0, velocityZ: 0,
+    primed: false, lastBeatMs: 0, segments: [],
+    topSide: 'left', patternStarted: false,
+    style: 'punchy-v', avgIntervalMs: null,
+  };
+
+  /**
+   * 接收外部 beat 信号（每检测到一次节拍时调用）。
+   * 由 chat.ts / ttsPlayer.ts 在 TTS 播放时按 RMS 峰值触发。
+   * 参考 airi-main BeatSyncController.scheduleBeat()。
+   */
+  public scheduleBeat(timestampMs?: number): void {
+    const now = timestampMs != null ? timestampMs : performance.now();
+    const bs = this._beatSync;
+
+    if (!bs.primed) {
+      bs.primed = true;
+      bs.lastBeatMs = now;
+      bs.targetY = 0; bs.targetZ = 0;
+      return;
+    }
+
+    const rawInterval = now - bs.lastBeatMs;
+    const interval = Math.min(2000, Math.max(220, rawInterval));
+    bs.lastBeatMs = now;
+    bs.avgIntervalMs = bs.avgIntervalMs == null
+      ? interval
+      : bs.avgIntervalMs * 0.7 + interval * 0.3;
+
+    // BPM 自动切换风格（与 airi autoStyleShift 一致）
+    const bpm = 60000 / bs.avgIntervalMs;
+    bs.style = bpm < 120 ? 'swing-lr' : bpm < 180 ? 'balanced-v' : 'punchy-v';
+
+    const halfDur = Math.max(80, interval / 2);
+    const startY  = bs.targetY;
+    const startZ  = bs.targetZ;
+    const sc = BEAT_STYLES[bs.style];
+    const nextSide: 'left' | 'right' = bs.topSide === 'left' ? 'right' : 'left';
+
+    bs.segments = [];
+
+    // pose 生成与 airi getTopPose / getBottomPose 完全对应
+    const getTopPose = (side: 'left' | 'right') => {
+      const dir = side === 'left' ? -1 : 1;
+      const zOff = (sc.pattern === 'swing' || sc.pattern === 'sway')
+        ? (sc.swingLift ?? sc.topRoll) : sc.topRoll;
+      return {
+        y: dir * sc.topYaw,
+        z: sc.pattern === 'v' ? dir * zOff : zOff,
+      };
+    };
+    const bottomPose = { y: 0, z: -sc.bottomDip };
+
+    const push = (sMs: number, dur: number, fY: number, fZ: number, tY: number, tZ: number) =>
+      bs.segments.push({ startMs: sMs, duration: dur, fromY: fY, fromZ: fZ, toY: tY, toZ: tZ });
+
+    if (sc.pattern === 'v') {
+      if (!bs.patternStarted) {
+        const top = getTopPose('left');
+        push(now, halfDur, startY, startZ, top.y, top.z);
+        bs.patternStarted = true; bs.topSide = 'left'; return;
+      }
+      const nextTop = getTopPose(nextSide);
+      push(now,           halfDur, startY,       startZ,       bottomPose.y, bottomPose.z);
+      push(now + halfDur, halfDur, bottomPose.y, bottomPose.z, nextTop.y,    nextTop.z);
+      bs.topSide = nextSide;
+    } else if (sc.pattern === 'swing') {
+      const sidePose = getTopPose(bs.topSide);
+      const oppPose  = getTopPose(nextSide);
+      const sideDur  = Math.max(60, interval * 0.35);
+      const crossDur = Math.max(60, interval - sideDur);
+      push(now,           sideDur,  startY,      startZ,      sidePose.y, sidePose.z);
+      push(now + sideDur, crossDur, sidePose.y,  sidePose.z,  oppPose.y,  oppPose.z);
+      bs.patternStarted = true; bs.topSide = nextSide;
+    } else { // sway
+      if (!bs.patternStarted) {
+        const side = getTopPose(bs.topSide);
+        push(now, halfDur, startY, startZ, side.y, side.z);
+        bs.patternStarted = true; return;
+      }
+      const lift    = sc.swingLift ?? 10;
+      const apex    = { y: 0, z: lift };
+      const oppPose = getTopPose(nextSide);
+      const leg1 = Math.max(60, interval * 0.5);
+      const leg2 = Math.max(60, interval - leg1);
+      push(now,       leg1, startY,  startZ,  apex.y,    apex.z);
+      push(now + leg1, leg2, apex.y, apex.z,  oppPose.y, oppPose.z);
+      bs.topSide = nextSide;
+    }
+  }
+
+  // beat-sync 诊断日志定时器
+  private _beatSyncLogTimer = 0;
+
+  private _updateBeatSync(dtSec: number): void {
+    if (!this._model) return;
+    const bs  = this._beatSync;
+    const now = performance.now();
+    const RELEASE_DELAY_MS = 1800;
+    const STIFFNESS = 120;
+    const DAMPING   = 16;
+
+    // ── 按时间线推进分段目标（绝对值，与 airi updateTargets 一致）────────
+    let cY = bs.targetY, cZ = bs.targetZ;
+    while (bs.segments.length) {
+      const seg = bs.segments[0];
+      if (now < seg.startMs) { cY = seg.fromY; cZ = seg.fromZ; break; }
+      const progress = Math.min(1, (now - seg.startMs) / Math.max(seg.duration, 1));
+      const t = 1 - Math.pow(1 - progress, 3); // easeOutCubic
+      cY = seg.fromY + (seg.toY - seg.fromY) * t;
+      cZ = seg.fromZ + (seg.toZ - seg.fromZ) * t;
+      if (progress >= 1) { bs.segments.shift(); continue; }
+      break;
+    }
+
+    // 超时释放（与 airi shouldRelease 一致）
+    if (bs.primed && !bs.segments.length && (now - bs.lastBeatMs) > RELEASE_DELAY_MS) {
+      bs.primed = false; bs.patternStarted = false; bs.topSide = 'left';
+      bs.lastBeatMs = 0; cY = 0; cZ = 0;
+      bs.velocityY *= 0.5; bs.velocityZ *= 0.5;
+    }
+    bs.targetY = cY; bs.targetZ = cZ;
+
+    // ── 半隐式欧拉弹簧积分（精确复刻 airi useMotionUpdatePluginBeatSync）──
+    // 关键：直接读模型当前参数值（loadParameters 之后的值）作为弹簧位置，
+    //       与 airi 的 getParameterValueById 语义完全一致。
+    // 弹簧会"对抗" motion 叠加的拉力，最终使 finalAngle ≈ beatTarget，
+    // 与 motion 幅度无关——这是 pre-stage set 的核心优势。
+    // ── 精确复刻 airi useMotionUpdatePluginBeatSync（三轴）────────────────
+    // 读 loadParameters 之后的当前帧参数值作为弹簧 pos（与 airi getParameterValueById 语义一致）
+    let paramX = this._model.getParameterValueById(this._idParamAngleX);
+    let paramY = this._model.getParameterValueById(this._idParamAngleY);
+    let paramZ = this._model.getParameterValueById(this._idParamAngleZ);
+
+    // X 轴：targetX 始终为 0（与 airi 完全一致），弹簧将 idle motion 带来的 X 偏移拉回中轴，
+    //       起到「稳定器」作用，减少头部左右漂移，让节拍感更聚焦在 Y/Z。
+    {
+      const target = 0; // airi: beatSync.targetX.value = 0，恒为 0
+      const accel = (STIFFNESS * (target - paramX) - DAMPING * bs.velocityX);
+      bs.velocityX += accel * dtSec;
+      paramX = paramX + bs.velocityX * dtSec;
+      if (Math.abs(target - paramX) < 0.01 && Math.abs(bs.velocityX) < 0.01) {
+        paramX = target; bs.velocityX = 0;
+      }
+    }
+    // Y 轴
+    {
+      const accel = (STIFFNESS * (bs.targetY - paramY) - DAMPING * bs.velocityY);
+      bs.velocityY += accel * dtSec;
+      paramY = paramY + bs.velocityY * dtSec;
+      if (Math.abs(bs.targetY - paramY) < 0.01 && Math.abs(bs.velocityY) < 0.01) {
+        paramY = bs.targetY; bs.velocityY = 0;
+      }
+    }
+    // Z 轴
+    {
+      const accel = (STIFFNESS * (bs.targetZ - paramZ) - DAMPING * bs.velocityZ);
+      bs.velocityZ += accel * dtSec;
+      paramZ = paramZ + bs.velocityZ * dtSec;
+      if (Math.abs(bs.targetZ - paramZ) < 0.01 && Math.abs(bs.velocityZ) < 0.01) {
+        paramZ = bs.targetZ; bs.velocityZ = 0;
+      }
+    }
+
+    // 诊断（800ms 一次）
+    if (now - this._beatSyncLogTimer >= 800) {
+      this._beatSyncLogTimer = now;
+      console.log(`[beat-sync] primed=${bs.primed} tgtY=${bs.targetY.toFixed(1)} tgtZ=${bs.targetZ.toFixed(1)} X=${paramX.toFixed(1)} Y=${paramY.toFixed(1)} Z=${paramZ.toFixed(1)} segs=${bs.segments.length}`);
+    }
+
+    // 绝对覆写（与 airi setParameterValueById 完全一致，三轴同步写入）
+    // motion 在本函数之后运行，会在此基础上叠加其曲线值
+    this._model.setParameterValueById(this._idParamAngleX, paramX);
+    this._model.setParameterValueById(this._idParamAngleY, paramY);
+    this._model.setParameterValueById(this._idParamAngleZ, paramZ);
+  }
+
+  /**
+   * 设置 TTS 讲话状态（状态机版本）。
+   * - true  → 进入 SPEAKING，立即打断 Idle 播放 Tap 动作，激活 beat-sync
+   * - false → 进入 POST_SPEAK，2 s 后自动回 IDLE_CALM，表情淡出
    */
   public setSpeaking(speaking: boolean): void {
-    if (this._isSpeaking === speaking) return;
-    this._isSpeaking = speaking;
     if (speaking) {
-      // 立即打断 Idle，产生「开口说话」的视觉信号
+      if (this._avatarState === AvatarState.SPEAKING) return;
+      this._avatarState = AvatarState.SPEAKING;
+      this._avatarIdleElapsedSec = 0; // 重置 bored 计时器
+      // 重置说话动作队列（每次开口说话重新 shuffle，保证序列新鲜感）
+      this._speakingQueue = [];
+      this._lastSpeakGroup = '';
+      // 重置 beat-sync 状态（velocity 归零，弹簧从模型当前值静止开始）
+      this._beatSync.primed = false;
+      this._beatSync.patternStarted = false;
+      this._beatSync.segments = [];
+      this._beatSync.targetY = 0; this._beatSync.targetZ = 0;
+      this._beatSync.velocityX = 0; this._beatSync.velocityY = 0; this._beatSync.velocityZ = 0;
+      // 立即打断 Idle，产生「开口说话」的视觉信号（直接用 Tap 开场）
       this.startRandomMotion('Tap', LAppDefine.PriorityNormal);
+    } else {
+      if (
+        this._avatarState !== AvatarState.SPEAKING &&
+        this._avatarState !== AvatarState.POST_SPEAK
+      ) return;
+      this._avatarState = AvatarState.POST_SPEAK;
+      this._postSpeakElapsedSec = 0;
+      // beat-sync 释放（下一帧自然超时处理）
+      this._beatSync.lastBeatMs = 0;
+    }
+  }
+
+  /**
+   * 触发情绪反应（状态机版本）。
+   * 会：① 设置表情参数过渡 ② 进入 REACTING 状态播放一次对应动作
+   * 动作播完后状态机自动回到 IDLE_CALM。
+   *
+   * @param emotionName 情绪名（需在 EMOTION_PRESETS 中存在）
+   * @param durationMs  表情持续时长（ms），默认 0 = 永久
+   * @param transitionMs 表情过渡时长（ms），默认 300
+   */
+  public triggerReaction(emotionName: string, durationMs = 0, transitionMs = 300): void {
+    const params = EMOTION_PRESETS[emotionName] ?? EMOTION_PRESETS.neutral;
+    this._currentEmotion = emotionName;
+    this.setEmotionParams(params, transitionMs, durationMs);
+    this._avatarIdleElapsedSec = 0; // 任何交互都重置 bored 计时器
+
+    // 若正在说话，不打断（表情生效，动作继续 SPEAKING 循环）
+    if (this._avatarState === AvatarState.SPEAKING) return;
+
+    const group = EMOTION_TO_MOTION_GROUP[emotionName] ?? 'Idle';
+    this._avatarState = AvatarState.REACTING;
+    this.startRandomMotion(group, LAppDefine.PriorityNormal);
+  }
+
+  /**
+   * 任何外部交互（发送消息、接收消息等）时调用，重置 bored 计时器。
+   */
+  public notifyInteraction(): void {
+    this._avatarIdleElapsedSec = 0;
+    if (this._avatarState === AvatarState.IDLE_BORED) {
+      this._avatarState = AvatarState.IDLE_CALM;
     }
   }
 
@@ -798,6 +1252,8 @@ export class LAppModel extends CubismUserModel {
 
   /** 当前情绪过渡目标值（参数ID → 目标值） */
   private _emotionTarget: Map<string, number> = new Map();
+  /** 过渡起点值（参数ID → 触发时的快照值），避免从 motion 动态值开始插值导致抖动 */
+  private _emotionStart: Map<string, number> = new Map();
   /** 情绪过渡剩余时间（ms） */
   private _emotionTransitionMs = 0;
   /** 情绪过渡总时间（ms） */
@@ -820,6 +1276,17 @@ export class LAppModel extends CubismUserModel {
     transitionMs = 300,
     durationMs = 0,
   ): void {
+    // 快照当前模型参数值作为过渡起点。
+    // 关键：在 motion 更新之后读取（即在 update() 中调用时已经有 motion 值了），
+    // 但 setEmotionParams 是从 IPC 命令触发的，此时 model 可能刚更新过一帧。
+    // 用快照而非每帧读取 current，保证过渡曲线稳定，不受 motion 曲线抖动影响。
+    this._emotionStart = new Map();
+    if (this._model) {
+      for (const paramId of Object.keys(params)) {
+        const handle = CubismFramework.getIdManager().getId(paramId);
+        this._emotionStart.set(paramId, this._model.getParameterValueById(handle) as number);
+      }
+    }
     this._emotionTarget = new Map(Object.entries(params));
     this._emotionTransitionMs = transitionMs;
     this._emotionTransitionTotal = transitionMs;
@@ -839,25 +1306,28 @@ export class LAppModel extends CubismUserModel {
     this._model.setParameterValueById(handle, value);
   }
 
-  /** 每帧推进情绪过渡（由 update() 调用） */
+  /** 每帧推进情绪过渡（由 update() 调用，在 motion/物理之后、model.update() 之前执行） */
   private _updateEmotionTransition(deltaTimeSeconds: number): void {
     if (this._emotionTarget.size === 0) return;
     if (!this._model) return;
 
     const dtMs = deltaTimeSeconds * 1000;
 
-    // 过渡插值：alpha 从 0→1，blended 从 current→targetVal
     if (this._emotionTransitionMs > 0) {
-      const alpha = Math.min(1, 1 - this._emotionTransitionMs / this._emotionTransitionTotal);
+      // 用已过时间计算 alpha（0→1），从快照起点线性插值到目标值。
+      // 参考 airi-main expression-controller：表情参数在 final 阶段用 setParameterValueById
+      // 覆盖 motion 曲线，保证表情层不受待机动画扰动影响。
+      const elapsed = this._emotionTransitionTotal - this._emotionTransitionMs;
+      const alpha = Math.min(1, elapsed / this._emotionTransitionTotal);
       this._emotionTarget.forEach((targetVal, paramId) => {
         const handle = CubismFramework.getIdManager().getId(paramId);
-        const current = this._model.getParameterValueById(handle);
-        const blended = current + (targetVal - current) * alpha;
+        const startVal = this._emotionStart.get(paramId) ?? 0;
+        const blended = startVal + (targetVal - startVal) * alpha;
         this._model.setParameterValueById(handle, blended);
       });
       this._emotionTransitionMs -= dtMs;
     } else {
-      // 过渡完成，维持目标值
+      // 过渡完成，每帧覆写目标值（确保 motion 曲线不会把表情参数拉回）
       this._emotionTarget.forEach((targetVal, paramId) => {
         const handle = CubismFramework.getIdManager().getId(paramId);
         this._model.setParameterValueById(handle, targetVal);

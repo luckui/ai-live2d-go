@@ -10,7 +10,7 @@
  */
 
 import { LAppDelegate } from './lappdelegate';
-import { EMOTION_PRESETS } from './lappmodel';
+import { EMOTION_PRESETS, EMOTION_DURATION_MS } from './lappmodel';
 import * as LAppDefine from './lappdefine';
 
 // ── 获取当前模型实例 ──────────────────────────────────────────────
@@ -22,44 +22,24 @@ function getModel() {
   return sub.getLive2DManager().getFirstModel();
 }
 
-// ── 情绪 → 动作映射（Hiyori_pro 可用的动作组）────────────────────
-
-const EMOTION_TO_MOTION: Record<string, { group: string; no?: number }> = {
-  happy:       { group: 'Tap',       no: 0 },
-  surprised:   { group: 'Flick',     no: 0 },
-  sad:         { group: 'FlickDown', no: 0 },
-  angry:       { group: 'FlickUp',   no: 0 },
-  shy:         { group: 'Tap@Body',  no: 0 },
-  embarrassed: { group: 'Tap@Body',  no: 0 },
-  thinking:    { group: 'Idle' },
-  neutral:     { group: 'Idle' },
-};
+// ── 情绪 → 动作映射已移入 lappmodel.ts EMOTION_TO_MOTION_GROUP
+// live2dController 不再需要维护此映射，由 LAppModel.triggerReaction() 统一管理
 
 // ── 命令处理 ──────────────────────────────────────────────────────
 
 function handleCommand(cmd: { type: string; [key: string]: unknown }): void {
   switch (cmd.type) {
     case 'emotion': {
-      const emotion = (cmd.emotion as string) ?? 'neutral';
-      const durationMs = (cmd.durationMs as number) ?? 0;
-      const playMotion = (cmd.playMotion as boolean) ?? true;
-      const params = EMOTION_PRESETS[emotion] ?? EMOTION_PRESETS.neutral;
+      const emotion   = (cmd.emotion as string) ?? 'neutral';
+      // 优先使用命令中指定的时长，否则查情绪时长表，最后回退 0（永久）
+      const durationMs = (cmd.durationMs as number) > 0
+        ? (cmd.durationMs as number)
+        : (EMOTION_DURATION_MS[emotion] ?? 0);
 
       const model = getModel();
       if (model) {
-        model.setEmotionParams(params, 300, durationMs);
-      }
-
-      if (playMotion) {
-        const motionInfo = EMOTION_TO_MOTION[emotion];
-        if (motionInfo && model) {
-          const no = motionInfo.no ?? -1;
-          if (no < 0) {
-            model.startRandomMotion(motionInfo.group, LAppDefine.PriorityNormal);
-          } else {
-            model.startMotion(motionInfo.group, no, LAppDefine.PriorityNormal);
-          }
-        }
+        // 通过状态机触发：表情 + 动作 + 状态转移一并完成
+        model.triggerReaction(emotion, durationMs, 300);
       }
       break;
     }
@@ -122,9 +102,17 @@ export function extractEmotionTag(text: string): { emotion: string | null; clean
   return { emotion, cleaned };
 }
 
-/** 触发情绪效果（可在 chat.ts 中解析到 emotion 后调用） */
-export function triggerEmotion(emotion: string, durationMs = 0, playMotion = true): void {
-  handleCommand({ type: 'emotion', emotion, durationMs, playMotion });
+/** 触发情绪效果（通过状态机，同时联动动作）*/
+export function triggerEmotion(emotion: string, durationMs = 0, _playMotion = true): void {
+  // durationMs=0 时自动查情绪时长表
+  const resolvedDuration = durationMs > 0 ? durationMs : (EMOTION_DURATION_MS[emotion] ?? 0);
+  handleCommand({ type: 'emotion', emotion, durationMs: resolvedDuration });
+}
+
+/** 通知有用户交互（发送/收到消息），重置 bored 计时器 */
+export function notifyInteraction(): void {
+  const model = getModel();
+  model?.notifyInteraction();
 }
 
 // ── 初始化：注册 IPC 监听器 ───────────────────────────────────────

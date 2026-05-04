@@ -151,9 +151,22 @@ function stopLipSync(): void {
 }
 
 /**
- * 通过 WebAudio AnalyserNode 播放 AudioBuffer，同时实时驱动 Live2D 口型。
+ * 通过 WebAudio AnalyserNode 播放 AudioBuffer，同时实时驱动 Live2D 口型 + beat-sync。
  * 返回 Promise，在音频播放结束时 resolve。
  */
+
+/** beat-sync 峰值检测状态（模块级，跨句子保持连续性） */
+let _beatLastRms = 0;
+let _beatLastTriggerMs = 0;
+let _beatFireCount = 0;      // 本次 TTS 播放期间累计触发次数，用于诊断
+let _beatRmsLogTimer = 0;    // 每 500ms 打一次 RMS 峰值样本，用于调阈值
+let _beatRmsMax = 0;         // 本采样周期内最大 RMS
+
+// RMS 升沿触发阈值：口型用 rms*10，即 rms=0.05 → 嘴开 50%。
+// 阈值必须远低于 0.1，否则 TTS 音频振幅不够时永远触发不了 beat。
+const BEAT_PEAK_THRESHOLD = 0.04;
+const BEAT_MIN_INTERVAL_MS = 220;  // 最小节拍间隔（ms），与 airi-main scheduleBeat 一致
+
 function playBufferWithLipSync(audioBuffer: AudioBuffer): Promise<void> {
   return new Promise<void>((resolve) => {
     const ctx = getAudioContext();
@@ -167,7 +180,7 @@ function playBufferWithLipSync(audioBuffer: AudioBuffer): Promise<void> {
     source.connect(analyser);
     analyser.connect(ctx.destination);
 
-    // 实时读取 RMS，写入 window._live2dMouthOpen
+    // 实时读取 RMS：① 驱动口型 ② 峰值检测驱动 beat-sync
     const loop = (): void => {
       analyser.getByteTimeDomainData(dataArray);
       let sumSq = 0;
@@ -176,8 +189,33 @@ function playBufferWithLipSync(audioBuffer: AudioBuffer): Promise<void> {
         sumSq += norm * norm;
       }
       const rms = Math.sqrt(sumSq / dataArray.length);
-      // 放大并鈓制到 [0, 1]，中文 TTS 音频振幅偶尔较小，提高系数确保口型明显
+      // 放大并钳制到 [0, 1]，中文 TTS 音频振幅偶尔较小，提高系数确保口型明显
       (window as any)._live2dMouthOpen = Math.min(1, rms * 10);
+
+      // ── 诊断日志：每 500ms 打印一次当期最大 RMS，帮助校准阈值 ─────────
+      const now = performance.now();
+      if (rms > _beatRmsMax) _beatRmsMax = rms;
+      if (now - _beatRmsLogTimer >= 500) {
+        console.log(`[beat-sync] rms peak=${_beatRmsMax.toFixed(4)}  mouth=${Math.min(1, _beatRmsMax * 10).toFixed(2)}  threshold=${BEAT_PEAK_THRESHOLD}  beats_total=${_beatFireCount}`);
+        _beatRmsMax = 0;
+        _beatRmsLogTimer = now;
+      }
+
+      // ── beat-sync 峰值检测（RMS 升沿触发）────────────────────────────
+      // 当 RMS 从低于阈值升至高于阈值时，视为一个语音音节峰，触发 beat
+      if (
+        rms > BEAT_PEAK_THRESHOLD &&
+        _beatLastRms <= BEAT_PEAK_THRESHOLD &&
+        now - _beatLastTriggerMs >= BEAT_MIN_INTERVAL_MS
+      ) {
+        const interval = now - (_beatLastTriggerMs || now);
+        _beatLastTriggerMs = now;
+        _beatFireCount++;
+        getLiveModel()?.scheduleBeat(now);
+        console.log(`[beat-sync] ♪ beat #${_beatFireCount}  rms=${rms.toFixed(4)}  interval=${interval.toFixed(0)}ms`);
+      }
+      _beatLastRms = rms;
+
       _rafId = requestAnimationFrame(loop);
     };
 
@@ -215,6 +253,12 @@ export async function playTTS(text: string, onDuration?: (ms: number) => void): 
   model?._wavFileHandler.stop();
   model?.setSpeaking(false); // 重置上一次的讲话状态
   stopLipSync();
+  // 重置 beat-sync 诊断计数器（每次新 TTS 从 0 开始计 beat 数）
+  _beatFireCount = 0;
+  _beatRmsMax = 0;
+  _beatRmsLogTimer = performance.now();
+  _beatLastRms = 0;
+  _beatLastTriggerMs = 0;
 
   const sentences = splitSentences(cleaned);
   console.log(`[TTS] 切分为 ${sentences.length} 句:`, sentences);

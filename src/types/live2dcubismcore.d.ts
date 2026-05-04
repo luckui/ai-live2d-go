@@ -4,6 +4,9 @@
  * Use of this source code is governed by the Live2D Proprietary Software license
  * that can be found at https://www.live2d.com/eula/live2d-proprietary-software-license-agreement_en.html.
  */
+
+/// <reference types="vite/client" />
+
 declare namespace Live2DCubismCore {
     /** Cubism version identifier. */
     type csmVersion = number;
