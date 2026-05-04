@@ -58,6 +58,7 @@ import manageHearingTool from './impl/manageHearing';
 import manageLive2dTool from './impl/manageLive2d';
 import asyncTaskTool from './impl/asyncTask';
 import scheduleTaskTool from './impl/scheduleTask';
+import manageBilibiliLiveTool from './impl/manageBilibiliLive';
 
 import { setToolRegistry } from './toolContext';
 
@@ -103,6 +104,7 @@ const registry = new ToolRegistry()
   .register(manageTTSTool)
   .register(manageHearingTool)
   .register(manageLive2dTool)
+  .register(manageBilibiliLiveTool)
   .register(asyncTaskTool)
   .register(scheduleTaskTool);
 

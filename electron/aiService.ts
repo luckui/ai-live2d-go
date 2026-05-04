@@ -12,6 +12,7 @@ import { getManualTopicsForPrompt } from './tools/impl/manual';
 import { buildChatPrompt } from './prompts/chat';
 import { buildAgentPrompt } from './prompts/agent';
 import { buildDeveloperPrompt } from './prompts/developer';
+import { buildStreamerPrompt } from './prompts/streamer';
 
 // ── 工具调用调试事件 ─────────────────────────────────────
 /** 单次工具调用的调试记录（推送给渲染层展示） */
@@ -202,7 +203,7 @@ async function _callWithToolLoopInternal(
 
   // 模式感知的最大循环轮数：chat 轻量 / agent 标准 / developer 深度
   const currentMode = getAgentMode();
-  const MAX_ROUNDS = ({ chat: 10, agent: 25, 'agent-debug': 25, developer: 200 } as Record<string, number>)[currentMode] ?? 25;
+  const MAX_ROUNDS = ({ chat: 10, agent: 25, 'agent-debug': 25, developer: 200, streamer: 25 } as Record<string, number>)[currentMode] ?? 25;
   
   for (let round = 0; round < MAX_ROUNDS; round++) {
     // 🆕 检查中断信号
@@ -399,6 +400,7 @@ export async function sendChatMessage(
     switch (currentAgentMode) {
       case 'chat':      return buildChatPrompt();
       case 'developer': return buildDeveloperPrompt();
+      case 'streamer':  return buildStreamerPrompt();
       default:          return buildAgentPrompt(); // agent, agent-debug
     }
   })();

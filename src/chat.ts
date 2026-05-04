@@ -93,7 +93,7 @@ let _twTimer: ReturnType<typeof setTimeout> | null = null;
 let _twFade: ReturnType<typeof setTimeout> | null = null;
 
 /** 在 Live2D 画布上显示打字机效果气泡。durationMs = 展开全部文字所需毫秒。 */
-function showTypewriterBubble(text: string, durationMs: number): void {
+export function showTypewriterBubble(text: string, durationMs: number): void {
   const overlay = document.getElementById('typewriter-overlay');
   const textEl  = document.getElementById('typewriter-text');
   if (!overlay || !textEl) return;

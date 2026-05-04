@@ -11,6 +11,7 @@
 
 import { LAppDelegate } from './lappdelegate';
 import type { LAppModel } from './lappmodel';
+import { showTypewriterBubble } from './chat';
 
 // ── 获取当前 Live2D 模型实例 ───────────────────────────────────────
 
@@ -320,4 +321,32 @@ export async function playTTS(text: string, onDuration?: (ms: number) => void): 
   stopLipSync();
   getLiveModel()?.setSpeaking(false);
   console.log('[TTS] 全部句子播放完成');
+}
+
+/**
+ * 注册 IPC 监听器，处理主进程推送的 TTS 文本（复用聊天框的 playTTS 逻辑）
+ * 在应用初始化时调用
+ */
+export function registerTTSPlayListener(): void {
+  const ttsAPI = (window as any).ttsAPI;
+  if (!ttsAPI?.onPlay) {
+    console.warn('[TTS] ttsAPI.onPlay 未注入，无法注册 tts:play 监听器');
+    return;
+  }
+
+  ttsAPI.onPlay((text: string) => {
+    console.log('[TTS] 收到主进程推送的文本，调用 playTTS():', text.substring(0, 50));
+    // 复用聊天框的 TTS 逻辑，并显示打字机气泡
+    playTTS(text, (actualMs) => {
+      if (actualMs > 0) {
+        // TTS 解码成功：打字机略快于声音
+        showTypewriterBubble(text, Math.max(300, actualMs * 0.92));
+      } else {
+        // TTS 启用但服务器不可达：回退到估算速度
+        showTypewriterBubble(text, text.length * 60);
+      }
+    }).catch((e) => console.error('[TTS] playTTS error:', e));
+  });
+
+  console.log('[TTS] tts:play 监听器已注册');
 }

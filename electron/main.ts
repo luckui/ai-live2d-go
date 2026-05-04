@@ -169,6 +169,21 @@ export function updateTTSConfig(newCfg: Partial<TTSConfig>): void {
   broadcastTTSChanged();
 }
 
+/**
+ * 播放 TTS 音频（自动生成并发送到渲染进程）
+ * 供主进程中的自动化流程（如 streamerController）调用
+ */
+export async function playTTSAudio(text: string): Promise<boolean> {
+  if (!mainWin || mainWin.isDestroyed() || mainWin.webContents.isDestroyed()) {
+    console.warn('[TTS] playTTSAudio → 跳过: 主窗口不可用');
+    return false;
+  }
+  // 直接发送文本到渲染进程，让渲染进程调用 playTTS()（复用聊天框逻辑）
+  mainWin.webContents.send('tts:play', { text });
+  console.log(`[TTS] playTTSAudio → 发送文本到渲染进程: ${text.substring(0, 50)}...`);
+  return true;
+}
+
 function loadPersistedConfig(): void {
   const stored = getSetting('llm_config');
   if (!stored) return;

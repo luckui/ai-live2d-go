@@ -295,6 +295,25 @@ export const TOOLSETS: Record<string, ToolsetDefinition> = {
       "manage_live2d",          // 设置情绪、播放动作、直接控制参数
     ],
   },
+  "streamer": {
+    description: "Streamer mode - Bilibili live host with danmu pool, gift priority, and topic control",
+    tools: [
+      "memory",
+      "todo",
+      "show_available_tools",
+      "switch_agent_mode",
+      "manage_tts",
+      "manage_hearing",
+      "manage_live2d",
+      "manage_bilibili_live",
+      "browser_open",
+      "browser_read_page",
+      "browser_click_smart",
+      "browser_type_smart",
+      "browser_screenshot",
+      "take_screenshot",
+    ],
+  },
 };
 
 /**

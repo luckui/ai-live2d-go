@@ -8,7 +8,7 @@
 let currentMode: string = 'agent';  // 默认 Agent 模式
 
 /** 所有合法模式 */
-export const VALID_MODES = ['chat', 'agent', 'agent-debug', 'developer'] as const;
+export const VALID_MODES = ['chat', 'agent', 'agent-debug', 'developer', 'streamer'] as const;
 export type AgentMode = typeof VALID_MODES[number];
 
 /**

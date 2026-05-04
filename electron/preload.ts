@@ -45,6 +45,9 @@ contextBridge.exposeInMainWorld('ttsAPI', {
   isEnabled: () => ipcRenderer.invoke('tts:isEnabled'),
   speak: (text: string) => ipcRenderer.invoke('tts:speak', text),
   health: () => ipcRenderer.invoke('tts:health'),
+  /** 监听主进程推送的 TTS 播放请求（用于直播间等场景） */
+  onPlay: (cb: (text: string) => void) =>
+    ipcRenderer.on('tts:play', (_e, payload: { text: string }) => cb(payload.text)),
 });
 
 contextBridge.exposeInMainWorld('ttsSettingsAPI', {
