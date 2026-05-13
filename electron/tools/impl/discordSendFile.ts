@@ -117,6 +117,34 @@ function findFiles(name: string, dirs: string[], maxDepth = 2): string[] {
   return results;
 }
 
+/** 瞬态网络错误关键词（可重试） */
+const TRANSIENT_NET_ERRORS = /aborted|socket disconnected|ECONNRESET|ECONNREFUSED|ETIMEDOUT|TLS|timeout|network/i;
+const SEND_MAX_RETRIES = 3;
+const SEND_RETRY_DELAY_MS = 1200;
+
+/**
+ * 对 Discord REST 调用进行重试，处理 undici/TLS 瞬态网络错误。
+ * 非网络错误（如权限问题）直接抛出，不重试。
+ */
+async function retryNetworkOp<T>(fn: () => Promise<T>): Promise<T> {
+  let lastErr: Error = new Error('unknown');
+  for (let attempt = 0; attempt < SEND_MAX_RETRIES; attempt++) {
+    try {
+      return await fn();
+    } catch (e) {
+      lastErr = e as Error;
+      const msg = lastErr.message ?? '';
+      if (!TRANSIENT_NET_ERRORS.test(msg)) throw e;  // 非瞬态错误，不重试
+      if (attempt < SEND_MAX_RETRIES - 1) {
+        const delay = SEND_RETRY_DELAY_MS * (attempt + 1);
+        console.warn(`[discord_send_file] 网络错误（第 ${attempt + 1}/${SEND_MAX_RETRIES} 次）: ${msg.slice(0, 120)}，${delay}ms 后重试...`);
+        await new Promise(r => setTimeout(r, delay));
+      }
+    }
+  }
+  throw lastErr;
+}
+
 const discordSendFileSkill: ToolDefinition<DiscordSendFileParams> = {
   isSkill: true,
   schema: {
@@ -241,7 +269,7 @@ const discordSendFileSkill: ToolDefinition<DiscordSendFileParams> = {
     // ── 3. 获取频道 ──────────────────────────────────────────────
     let channel;
     try {
-      channel = await client.channels.fetch(channel_id);
+      channel = await retryNetworkOp(() => client.channels.fetch(channel_id));
     } catch (e) {
       return `❌ 无法获取频道 ${channel_id}：${(e as Error).message}`;
     }
@@ -250,22 +278,24 @@ const discordSendFileSkill: ToolDefinition<DiscordSendFileParams> = {
     }
 
     // ── 4. 发送 ─────────────────────────────────────────────────
-    const attachment = new AttachmentBuilder(resolvedPath, {
-      name: path.basename(resolvedPath),
-    });
-
     try {
-      await (channel as TextChannel).send({
-        content: message?.trim() || undefined,
-        files: [attachment],
+      await retryNetworkOp(() => {
+        // 每次重试重新构建 AttachmentBuilder，避免内部流状态问题
+        const attachment = new AttachmentBuilder(resolvedPath!, {
+          name: path.basename(resolvedPath!),
+        });
+        return (channel as TextChannel).send({
+          content: message?.trim() || undefined,
+          files: [attachment],
+        });
       });
     } catch (e) {
       const msg = (e as Error).message ?? String(e);
       // 常见：文件超过 8MB Discord 限制
       if (/too large|payload|size/i.test(msg)) {
-        return `❌ 文件过大无法发送（Discord 免费服务器限制 8MB）：${path.basename(resolvedPath)}`;
+        return `❌ 文件过大无法发送（Discord 免费服务器限制 8MB）：${path.basename(resolvedPath!)}`;
       }
-      return `❌ 发送失败：${msg.slice(0, 300)}`;
+      return `❌ 发送失败（已重试 ${SEND_MAX_RETRIES} 次）：${msg.slice(0, 300)}`;
     }
 
     // 截图临时文件用完即删
