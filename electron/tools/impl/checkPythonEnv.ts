@@ -36,7 +36,6 @@ const checkPythonEnvSkill: ToolDefinition<Record<never, never>> = {
     },
   },
 
-  isSkill: true,
 
   async execute(): Promise<ToolExecuteResult> {
     const registry = getToolRegistry();

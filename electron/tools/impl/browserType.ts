@@ -121,7 +121,6 @@ const browserTypeSmartSkill: ToolDefinition<BrowserTypeSmartParams> = {
     },
   },
 
-  isSkill: true,
 
   async execute({ description, idx, value, css, clear = true }): Promise<ToolExecuteResult> {
     const page = browserSession.currentPage;

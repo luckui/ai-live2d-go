@@ -322,7 +322,6 @@ const browserClickSmartSkill: ToolDefinition<BrowserClickSmartParams> = {
     },
   },
 
-  isSkill: true,
 
   async execute({ text, idx, css, exact = false }): Promise<ToolExecuteResult> {
     const page = browserSession.currentPage;

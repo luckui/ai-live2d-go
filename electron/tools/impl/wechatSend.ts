@@ -27,7 +27,6 @@ interface WeChatSendParams {
 }
 
 const wechatSendTool: ToolDefinition<WeChatSendParams> = {
-  hideWhenSkills: true,   // wechat_send_file Skill 存在时自动隐藏，AI 优先走 Skill
   schema: {
     type: 'function',
     function: {

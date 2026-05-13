@@ -146,7 +146,6 @@ async function retryNetworkOp<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 const discordSendFileSkill: ToolDefinition<DiscordSendFileParams> = {
-  isSkill: true,
   schema: {
     type: 'function',
     function: {

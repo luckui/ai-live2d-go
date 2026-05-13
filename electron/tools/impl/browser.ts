@@ -380,7 +380,6 @@ export async function readPageSummary(mode: 'brief' | 'full' = 'brief'): Promise
 interface OpenParams { query: string }
 
 const browserOpen: ToolDefinition<OpenParams> = {
-  hideWhenSkills: true,   // 由 browser_open Skill 替代（注册后覆盖），有 Skill 时隐藏
   schema: {
     type: 'function',
     function: {
@@ -700,7 +699,6 @@ const browserWait: ToolDefinition<WaitParams> = {
 interface ClickParams { selector: string; force?: boolean }
 
 const browserClick: ToolDefinition<ClickParams> = {
-  hideWhenSkills: true,   // 由 browser_click_smart Skill 内部处理，有 Skill 时隐藏
   schema: {
     type: 'function',
     function: {
@@ -761,7 +759,6 @@ const browserClick: ToolDefinition<ClickParams> = {
 interface TypeParams { selector: string; text: string; submit?: boolean }
 
 const browserType: ToolDefinition<TypeParams> = {
-  hideWhenSkills: true,   // 由 browser_type_smart Skill 内部处理，有 Skill 时隐藏
   schema: {
     type: 'function',
     function: {
@@ -1025,7 +1022,6 @@ const browserSwitchTab: ToolDefinition<SwitchTabParams> = {
 interface JsClickParams { selector: string }
 
 const browserJsClick: ToolDefinition<JsClickParams> = {
-  hideWhenSkills: true,   // 由 browser_click_smart Skill 内部处理，有 Skill 时隐藏
   schema: {
     type: 'function',
     function: {
@@ -1127,7 +1123,6 @@ const browserJsClick: ToolDefinition<JsClickParams> = {
  * 避免因 selector 模糊而填错字段（如把密码写进用户名框）。
  */
 const browserGetInputs: ToolDefinition<Record<string, never>> = {
-  hideWhenSkills: true,   // 由 browser_type_smart Skill 内部扫描，有 Skill 时隐藏
   schema: {
     type: 'function',
     function: {
@@ -1265,7 +1260,6 @@ const browserGetInputs: ToolDefinition<Record<string, never>> = {
 interface TypeRichParams { selector: string; text: string; clear?: boolean }
 
 const browserTypeRich: ToolDefinition<TypeRichParams> = {
-  hideWhenSkills: true,   // 由 browser_type_smart Skill 内部处理，有 Skill 时隐藏
   schema: {
     type: 'function',
     function: {
@@ -1342,7 +1336,6 @@ const browserTypeRich: ToolDefinition<TypeRichParams> = {
  *                        →（仍失败）browser_js_click(CSS sel)
  */
 const browserGetButtons: ToolDefinition<Record<string, never>> = {
-  hideWhenSkills: true,   // 由 browser_click_smart Skill 内部处理，有 Skill 时隐藏
   schema: {
     type: 'function',
     function: {

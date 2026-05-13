@@ -71,7 +71,6 @@ const manageTTSTool: ToolDefinition<ManageTTSParams> = {
     },
   },
 
-  isSkill: true,
 
   async execute(params: ManageTTSParams): Promise<ToolExecuteResult> {
     // 自动推断引擎：优先用参数，否则从当前 provider 取

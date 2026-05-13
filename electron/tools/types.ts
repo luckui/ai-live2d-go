@@ -187,30 +187,6 @@ export interface ToolDefinition<TParams = Record<string, unknown>> {
    * ```
    */
   checkAvailable?: () => boolean;
-
-  /**
-   * @deprecated 使用 toolsets.ts 的 Toolset 系统替代
-   *
-   * 标记此工具为高级 Skill（封装了多步原子操作的复合能力）。
-   * ToolRegistry.getSchemasForMode() 时，若存在 Skill，
-   * 会优先暴露 Skill 并收起部分冗余的底层原子工具，降低 AI 选择压力。
-   *
-   * 新架构：使用 toolsets.ts 定义工具分组，不再需要在各工具代码中标记。
-   */
-  isSkill?: boolean;
-
-  /**
-   * @deprecated 使用 toolsets.ts 的 Toolset 系统替代
-   *
-   * 当注册表中存在至少一个 Skill 时，自动隐藏此工具。
-   * 适用于已被某个 Skill 内部封装、不应直接暴露给 AI 的底层原子工具。
-   * 例如：browser_click_smart 注册后，browser_click / browser_js_click / browser_get_buttons
-   * 应加此标记，避免 AI 在有 Skill 的情况下仍直接调用底层决策树工具。
-   *
-   * 新架构：在 toolsets.ts 中定义 browser-primitive 和 browser-smart 两个 toolset，
-   * 默认只启用 browser-smart（不包含 browser_click 等原子工具）。
-   */
-  hideWhenSkills?: boolean;
 }
 
 // ── OpenAI Chat Message 类型（工具调用感知）──────────────

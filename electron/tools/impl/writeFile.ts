@@ -92,7 +92,6 @@ const writeFileSkill: ToolDefinition<WriteFileParams> = {
     },
   },
 
-  isSkill: true,
 
   async execute({ path: filePath, content, mode, encoding = 'utf8' }): Promise<ToolExecuteResult> {
     // 拒绝相对路径：相对路径会被 resolve 到程序内部 cwd，远非用户期望的位置

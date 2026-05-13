@@ -63,7 +63,6 @@ const openTerminalSkill: ToolDefinition<OpenTerminalParams> = {
     },
   },
 
-  isSkill: true,
 
   async execute({ type = 'cmd', command }): Promise<ToolExecuteResult> {
     const reg = getToolRegistry();

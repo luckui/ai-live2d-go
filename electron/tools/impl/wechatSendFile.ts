@@ -118,7 +118,6 @@ function findFiles(name: string, dirs: string[], maxDepth = 2): string[] {
 }
 
 const wechatSendFileSkill: ToolDefinition<WeChatSendFileParams> = {
-  isSkill: true,
   schema: {
     type: 'function',
     function: {

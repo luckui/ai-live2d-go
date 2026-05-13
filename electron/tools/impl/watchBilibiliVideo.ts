@@ -183,7 +183,6 @@ async function fetchVideoInfo(vid: { type: 'bvid' | 'avid'; id: string }): Promi
 }
 
 const watchBilibiliVideoTool: ToolDefinition<WatchBilibiliVideoParams> = {
-  isSkill: true,
   schema: {
     type: 'function',
     function: {

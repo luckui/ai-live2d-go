@@ -31,7 +31,6 @@ async function waitSettle(ms = 2000): Promise<void> {
 }
 
 const browserOpenSkill: ToolDefinition<BrowserOpenParams> = {
-  isSkill: true,
   schema: {
     type: 'function',
     function: {

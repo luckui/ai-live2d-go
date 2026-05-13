@@ -134,7 +134,6 @@ const manageHearingTool: ToolDefinition<ManageHearingParams> = {
     },
   },
 
-  isSkill: true,
 
   async execute(params: ManageHearingParams): Promise<ToolExecuteResult> {
     const modeLabels: Record<string, string> = {

@@ -109,40 +109,6 @@ export class ToolRegistry {
   }
 
   /**
-   * @deprecated 使用 getSchemasForToolset 替代
-   *
-   * Skill 优先模式下的 schema 列表（旧架构，保留兼容性）
-   */
-  getSchemasForMode(excludeWhenSkills?: string[]): ToolSchema[] {
-    const all = [...this.tools.values()];
-    const hasSkills = all.some(t => t.isSkill);
-
-    if (!hasSkills) {
-      // 无 Skill 注册，全量暴露（与 getSchemas() 等价）
-      return all
-        .filter(t => !t.checkAvailable || t.checkAvailable())  // 运行时条件检测
-        .map(t => t.schema);
-    }
-
-    // 有 Skill：按规则过滤原子工具
-    const toHide: Set<string> = new Set(
-      excludeWhenSkills === undefined
-        ? all.filter(t => !t.isSkill && t.schema.function.name.startsWith('sys_'))
-             .map(t => t.schema.function.name)
-        : excludeWhenSkills
-    );
-
-    return all
-      .filter(t => {
-        if (t.isSkill) return true;                          // Skill 永远暴露
-        if (t.hideWhenSkills) return false;                  // 有 Skill 时隐藏
-        return !toHide.has(t.schema.function.name);          // sys_* 等按名单隐藏
-      })
-      .filter(t => !t.checkAvailable || t.checkAvailable())  // 运行时条件检测
-      .map(t => t.schema);
-  }
-
-  /**
    * 执行指定工具
    *
    * @param name     - 工具函数名（来自 LLM 响应的 tool_call.function.name）

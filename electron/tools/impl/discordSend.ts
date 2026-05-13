@@ -24,7 +24,6 @@ interface DiscordSendParams {
 }
 
 const discordSendTool: ToolDefinition<DiscordSendParams> = {
-  hideWhenSkills: true,   // discord_send_file Skill 存在时自动隐藏，AI 优先走 Skill
   schema: {
     type: 'function',
     function: {
