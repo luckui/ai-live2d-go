@@ -15,9 +15,25 @@ import { streamerSession } from './streamerSession';
 import type { StreamerReply } from './types';
 import { playTTSAudio } from '../main';
 import { sendLive2DCommand } from '../live2dBridge';
+import aiConfig from '../ai.config';
+import { fetchCompletion } from '../llmClient';
+import { giftCreditLedger } from './giftCreditLedger';
+import { toolRegistry } from '../tools/index';
+import { resolveToolset } from '../toolsets';
+import { browserSession } from '../tools/impl/browserSession';
+import { FUNDED_ALLOWED_TOOLS, checkToolCall } from './streamerGuard';
+import type { ChatMessage, ToolSchema } from '../tools/types';
+import {
+  SESSION_SYSTEM_PROMPT,
+  FUNDED_EXECUTOR_SYSTEM_PROMPT,
+  TOOL_LOOP_CONTINUE,
+  fundedAckFallback,
+  fundedErrorText,
+  proactiveUserPrompt,
+} from './streamerPrompts';
 
 export interface StreamerControllerConfig {
-  /** 主动开口阈值（毫秒），默认 45 秒 */
+  /** 主动开口阈值（毫秒），默认 5 分钟 */
   idleThresholdMs?: number;
   /** 检查间隔（毫秒），默认 3 秒 */
   checkIntervalMs?: number;
@@ -27,15 +43,35 @@ export interface StreamerControllerConfig {
   autoLive2D?: boolean;
 }
 
+/** 从 .env 读取数值，解析失败则用 fallback */
+function envInt(key: string, fallback: number): number {
+  const v = process.env[key];
+  if (v === undefined || v === '') return fallback;
+  const n = parseInt(v, 10);
+  return isNaN(n) ? fallback : n;
+}
+
+/** 从 .env 读取布尔值（'false'/'0' → false，其余非空 → true） */
+function envBool(key: string, fallback: boolean): boolean {
+  const v = process.env[key];
+  if (v === undefined || v === '') return fallback;
+  return v !== 'false' && v !== '0';
+}
+
 class StreamerControllerManager extends EventEmitter {
   private running = false;
   private timer: NodeJS.Timeout | null = null;
   private lastSpeakAt = 0;
+  private ticking = false; // 防止普通 tick 并发
+
+  /** funded_request 专属逐次执行队列，独立于主 tick 循环 */
+  private fundedQueue: StreamerReply[] = [];
+  private fundedRunning = false; // 是否有 funded 任务正在执行
   private config: Required<StreamerControllerConfig> = {
-    idleThresholdMs: 45_000,
-    checkIntervalMs: 3_000,
-    autoTTS: true,
-    autoLive2D: true,
+    idleThresholdMs: envInt('STREAMER_IDLE_THRESHOLD_MS', 300_000),
+    checkIntervalMs: envInt('STREAMER_CHECK_INTERVAL_MS', 3_000),
+    autoTTS:         envBool('STREAMER_AUTO_TTS', true),
+    autoLive2D:      envBool('STREAMER_AUTO_LIVE2D', true),
   };
 
   /**
@@ -75,6 +111,12 @@ class StreamerControllerManager extends EventEmitter {
       this.timer = null;
     }
 
+    // 清空待执行的 funded 任务队列（已在运行的任务会自然完成）
+    if (this.fundedQueue.length > 0) {
+      console.log(`[StreamerController] Discarding ${this.fundedQueue.length} pending funded tasks on stop`);
+      this.fundedQueue = [];
+    }
+
     console.log('[StreamerController] Stopped');
   }
 
@@ -86,8 +128,34 @@ class StreamerControllerManager extends EventEmitter {
       running: this.running,
       lastSpeakAt: this.lastSpeakAt,
       idleDurationMs: Date.now() - this.lastSpeakAt,
+      fundedTaskRunning: this.fundedRunning,
+      fundedTaskQueueSize: this.fundedQueue.length,
       config: this.config,
     };
+  }
+
+  /**
+   * 运行时更新主控配置（不需要重启）
+   * - idleThresholdMs: 暖场阈值，改小让 AI 更积极开口，改大让 AI 更安静
+   * - autoTTS: 是否自动 TTS 朗读回复
+   * - autoLive2D: 是否自动控制 Live2D
+   * checkIntervalMs 不支持热更新（需要重启计时器），忽略该字段
+   */
+  updateConfig(patch: Omit<Partial<StreamerControllerConfig>, 'checkIntervalMs'>): void {
+    const before = { ...this.config };
+    this.config = { ...this.config, ...patch };
+    console.log('[StreamerController] Config updated:', { before, after: this.config });
+  }
+
+  /**
+   * 公共 TTS 接口：供主播对话路径直接将 AI 回复送去朗读。
+   * - 只有 running=true 且 autoTTS=true 时才实际播放，其余情况静默忽略
+   * - 重置 lastSpeakAt，避免论论和暗场在 TTS 刷新后立即重复触发
+   */
+  async speak(text: string): Promise<void> {
+    if (!this.running || !this.config.autoTTS || !text.trim()) return;
+    this.lastSpeakAt = Date.now();
+    await this.speakText(text);
   }
 
   /**
@@ -95,19 +163,25 @@ class StreamerControllerManager extends EventEmitter {
    */
   private async tick(): Promise<void> {
     if (!this.running) return;
+    if (this.ticking) return; // 上一次 tick 还没完成，跳过
 
-    const status = streamerSession.status();
-    if (!status.running) return;
+    this.ticking = true;
+    try {
+      const status = streamerSession.status();
+      if (!status.running) return;
 
-    // 1. 检查是否有待处理的弹幕/礼物
-    const hasPending = status.queue.pendingDanmu > 0 || status.queue.pendingPriority > 0;
+      // 1. 检查是否有待处理的弹幕/礼物
+      const hasPending = status.queue.pendingDanmu > 0 || status.queue.pendingPriority > 0;
 
-    if (hasPending) {
-      // 有弹幕：生成并朗读回复
-      await this.processReply();
-    } else {
-      // 无弹幕：检查是否需要主动开口
-      await this.checkProactiveSpeak();
+      if (hasPending) {
+        // 有弹幕：生成并朗读回复
+        await this.processReply();
+      } else {
+        // 无弹幕：检查是否需要主动开口
+        await this.checkProactiveSpeak();
+      }
+    } finally {
+      this.ticking = false;
     }
   }
 
@@ -124,12 +198,17 @@ class StreamerControllerManager extends EventEmitter {
       }
 
       console.log(`[StreamerController] Generated reply (kind=${reply.kind}): ${reply.reply?.slice(0, 80) || '(empty)'}`);
-      console.log(`[StreamerController] Reply events: ${reply.eventIds?.length || 0} items, prompt length: ${reply.prompt?.length || 0} chars`);
 
       // 更新发言时间
       this.lastSpeakAt = Date.now();
 
-      // 自动 TTS 朗读
+      // funded_request：放入专属逐次队列，不阻塞主 tick（让普通弹幕继续得到回复）
+      if (reply.kind === 'funded_request' && reply.fundedBy) {
+        this.enqueueFundedTask(reply);
+        return;
+      }
+
+      // 普通路径：TTS 朗读 + Live2D
       if (this.config.autoTTS && reply.reply) {
         console.log(`[StreamerController] Speaking via TTS: ${reply.reply.slice(0, 50)}...`);
         await this.speakText(reply.reply);
@@ -137,7 +216,6 @@ class StreamerControllerManager extends EventEmitter {
         console.warn('[StreamerController] Reply text is empty, skipping TTS');
       }
 
-      // 自动 Live2D 控制
       if (this.config.autoLive2D) {
         this.controlLive2D(reply);
       }
@@ -147,6 +225,163 @@ class StreamerControllerManager extends EventEmitter {
       console.error('[StreamerController] Process reply error:', err);
     }
   }
+
+  /**
+   * 将 funded_request 放入逐次执行队列，并启动 drain（若尚未运行）
+   * 队列是 FIFO，保证送礼物的观众按先后顺序得到响应，互不打断
+   */
+  private enqueueFundedTask(reply: StreamerReply): void {
+    this.fundedQueue.push(reply);
+    console.log(`[StreamerController] Funded task enqueued (queue size: ${this.fundedQueue.length})`);
+    if (!this.fundedRunning) {
+      void this.drainFundedQueue();
+    }
+  }
+
+  /**
+   * 逐次消费 fundedQueue：一个任务完成后才取下一个，保证顺序且不互相打断
+   * 独立于主 tick，不持有 ticking 锁，普通弹幕和 proactive 可正常执行
+   */
+  private async drainFundedQueue(): Promise<void> {
+    if (this.fundedRunning) return;
+    this.fundedRunning = true;
+    try {
+      while (this.fundedQueue.length > 0) {
+        const task = this.fundedQueue.shift()!;
+        console.log(`[StreamerController] Funded queue: starting task, ${this.fundedQueue.length} remaining after this`);
+        await this.processFundedRequest(task);
+      }
+    } finally {
+      this.fundedRunning = false;
+    }
+  }
+
+  /**
+   * 处理礼物信用驱动的请求：启动工具调用循环，执行完后 TTS 播报结果，消费信用
+   */
+  private async processFundedRequest(reply: StreamerReply): Promise<void> {
+    const { fundedBy } = reply;
+    if (!fundedBy) return;
+
+    console.log(`[StreamerController] funded_request from ${fundedBy.uname}: "${reply.prompt.slice(0, 80)}..."`);
+
+    // 注意：不预先播报任何内容，等模型真正调用工具后才说确认语（避免幻觉承诺）
+
+    let executedAnyTool = false; // 标记是否真正调用过工具，控制信用消费时机
+
+    // 占用浏览器锁，防止与主播 chat 工具调用并发操控同一 Playwright page
+    const releaseBrowser = await browserSession.mutex.acquire(`funded:${fundedBy.uid}`);
+    try {
+      // 从 streamer 工具集中筛选出白名单工具（streamerGuard.FUNDED_ALLOWED_TOOLS）
+      // 双重约束：工具集已限制注册范围，白名单进一步锁死付费观众能触发的工具
+      const registeredToolNames = new Set(resolveToolset('streamer'));
+      const fundedToolNames = [...FUNDED_ALLOWED_TOOLS].filter(t => registeredToolNames.has(t));
+      const toolSchemas: ToolSchema[] = toolRegistry.getSchemasByNames(fundedToolNames);
+
+      const provider = aiConfig.providers[aiConfig.activeProvider];
+      if (!provider) throw new Error('no active provider');
+
+      const systemPrompt = FUNDED_EXECUTOR_SYSTEM_PROMPT;
+
+      const msgBuf: ChatMessage[] = [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: reply.prompt },
+      ];
+
+      const MAX_ROUNDS = 8;
+      let finalText = '';
+
+      for (let round = 0; round < MAX_ROUNDS; round++) {
+        const data = await fetchCompletion(provider, msgBuf, toolSchemas.length > 0 ? toolSchemas : undefined);
+        const choice = data.choices[0];
+
+        // 无工具调用 → 模型决定直接回复（普通聊天或最终播报）
+        if (choice.finish_reason !== 'tool_calls' || !choice.message.tool_calls?.length) {
+          finalText = choice.message.content?.trim() ?? '';
+          break;
+        }
+
+        // ── 第一次工具调用：此刻才能诚实地说"我现在去做某事" ──
+        if (!executedAnyTool) {
+          executedAnyTool = true;
+          // 模型在 content 字段里应已生成口语确认，如"好的，我去看这个视频！"
+          // 有且长度合适则直接播出；否则用静态后备文案
+          const modelAck = choice.message.content?.trim() ?? '';
+          const ackText = modelAck.length > 0 && modelAck.length <= 60
+            ? modelAck
+            : fundedAckFallback(fundedBy.uname, choice.message.tool_calls[0].function.name);
+          if (this.config.autoTTS) await this.speakText(ackText);
+          // 确认真实调用工具后才消费信用，普通聊天不会走到这里
+          giftCreditLedger.consume(fundedBy.uid);
+          console.log(`[StreamerController] funded ack spoken: "${ackText}"`);
+        }
+
+        // 执行工具
+        msgBuf.push({
+          role: 'assistant',
+          content: choice.message.content,
+          tool_calls: choice.message.tool_calls,
+        });
+
+        for (const tc of choice.message.tool_calls) {
+          // 程序层安全检查（白名单 + URL 参数验证），不依赖 AI 自律
+          const currentPageUrl = browserSession.currentPage?.url();
+          const guard = checkToolCall(tc.function.name, tc.function.arguments, currentPageUrl);
+          if (!guard.safe) {
+            const blocked = `[BLOCKED] ${guard.reason ?? '安全策略拒绝'}，无法执行此操作。`;
+            msgBuf.push({ role: 'tool', tool_call_id: tc.id, content: blocked });
+            console.warn(`[StreamerController] funded tool blocked: ${tc.function.name} — ${guard.reason}`);
+            continue;
+          }
+          const taskCtx = { conversationId: `funded-${fundedBy.uid}-${Date.now()}` };
+          const result = await toolRegistry.execute(tc.function.name, tc.function.arguments, taskCtx);
+          const textResult = typeof result === 'object' ? JSON.stringify(result) : String(result);
+          msgBuf.push({ role: 'tool', tool_call_id: tc.id, content: textResult });
+          console.log(`[StreamerController] funded tool: ${tc.function.name} → ${textResult.slice(0, 80)}`);
+        }
+
+        msgBuf.push({ role: 'user', content: TOOL_LOOP_CONTINUE });
+      }
+
+      // 普通聊天分支（模型没有调用任何工具）
+      if (!executedAnyTool) {
+        // 信用保留，不消费（等下次真实请求再用）
+        console.log(`[StreamerController] funded_request treated as casual chat, credit preserved`);
+        if (this.config.autoTTS && finalText) await this.speakText(finalText);
+        reply.reply = finalText;
+        reply.kind = 'danmu_single'; // 降级，前端无需展示为任务
+        this.emit('reply', reply);
+        return;
+      }
+
+      // 播报执行结果
+      if (finalText && this.config.autoTTS) {
+        await this.speakText(finalText);
+      }
+
+      if (this.config.autoLive2D) {
+        sendLive2DCommand({ type: 'emotion', emotion: 'happy', playMotion: true });
+      }
+
+      reply.reply = finalText;
+      this.emit('reply', reply);
+
+    } catch (err) {
+      console.error('[StreamerController] funded_request error:', err);
+      // 只有已经调用过工具（信用已消费）才播出错误提示
+      if (executedAnyTool && this.config.autoTTS) {
+        await this.speakText(fundedErrorText(fundedBy.uname));
+      }
+      // 未执行任何工具就出错（网络问题等），保留信用让观众可以重试
+      if (!executedAnyTool) {
+        console.warn(`[StreamerController] funded_request failed before tool execution, credit preserved for ${fundedBy.uid}`);
+      }
+    } finally {
+      releaseBrowser(); // 必须在 finally 里释放，确保异常时也不死锁
+    }
+  }
+
+  /** 工具调用确认语后备文案 — 统一由 streamerPrompts.fundedAckFallback 管理 */
 
   /**
    * 检查是否需要主动开口
@@ -161,18 +396,7 @@ class StreamerControllerManager extends EventEmitter {
       const status = streamerSession.status();
       const topic = status.topic || '自由聊天';
 
-      // 构造主动开口 prompt
-      const proactivePrompt = [
-        '你是正在 B 站直播的 Live2D 主播 Hiyori。',
-        `本场主题：${topic}`,
-        '',
-        `现在直播间没有弹幕已经超过 ${Math.floor(idleDuration / 1000)} 秒了。`,
-        '你可以主动抛一个与主题相关的话题，或者自言自语一下活跃气氛。',
-        '不要问太深的问题，轻松自然即可，控制在 60 字内。',
-      ].join('\n');
-
-      // 这里可以调用 AI 生成主动开口内容
-      // 为了简化，暂时使用预设话题
+      const proactivePrompt = proactiveUserPrompt(topic, Math.floor(idleDuration / 1000));
       const proactiveText = await this.generateProactiveText(proactivePrompt);
 
       if (proactiveText) {
@@ -205,10 +429,19 @@ class StreamerControllerManager extends EventEmitter {
    */
   private async generateProactiveText(prompt: string): Promise<string | null> {
     try {
-      // TODO: 调用 AI 生成（可以复用 streamerSession 的生成逻辑）
-      // 暂时返回 null，让主动开口逻辑不执行
-      return null;
-    } catch {
+      const provider = aiConfig.providers[aiConfig.activeProvider];
+      if (!provider) {
+        console.warn('[StreamerController] generateProactiveText: no active AI provider');
+        return null;
+      }
+      const data = await fetchCompletion(provider, [
+        { role: 'system', content: SESSION_SYSTEM_PROMPT },
+        { role: 'user', content: prompt },
+      ]);
+      const text = data.choices[0]?.message.content?.trim() ?? '';
+      return text || null;
+    } catch (err) {
+      console.error('[StreamerController] generateProactiveText error:', err);
       return null;
     }
   }

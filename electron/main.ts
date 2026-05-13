@@ -729,6 +729,10 @@ function createWindow(): void {
 
   ipcMain.handle('hearing:status', () => hearingManager.getStatus());
 
+  // TTS 播放期间暂停/恢复转录处理（防止 AI 声音自回音）
+  ipcMain.handle('hearing:pause-for-tts', () => hearingManager.pauseForTTS());
+  ipcMain.handle('hearing:resume-from-tts', () => hearingManager.resumeAfterTTS());
+
   // renderer 上报转写结果
   ipcMain.on('hearing:report-transcription', (_e, result) => {
     hearingManager.onTranscription(result);
@@ -780,7 +784,19 @@ function createWindow(): void {
     mainWin?.webContents?.send(channel, payload);
   };
   taskManager.on('task:started',   pushTaskEvent('task:started'));
-  taskManager.on('task:completed', pushTaskEvent('task:completed'));
+  taskManager.on('task:completed', (task) => {
+    // 推送事件到渲染进程
+    pushTaskEvent('task:completed')(task);
+    // streamer 模式：定时任务完成后自动 TTS 播报结果
+    // 动态 import 避免 main ↔ streamerController 静态循环依赖
+    if (task.type === 'cron' && task.result?.trim()) {
+      void import('./streaming/streamerController').then(({ streamerController }) => {
+        if (streamerController.getStatus().running) {
+          void streamerController.speak(task.result!);
+        }
+      });
+    }
+  });
   taskManager.on('task:failed',    pushTaskEvent('task:failed'));
   taskManager.on('task:cancelled', pushTaskEvent('task:cancelled'));
   taskManager.on('task:progress',  pushTaskEvent('task:progress'));

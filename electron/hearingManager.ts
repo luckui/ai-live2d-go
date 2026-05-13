@@ -128,6 +128,8 @@ class HearingManager extends EventEmitter {
   private dictationTimer: ReturnType<typeof setTimeout> | null = null;
   /** 听写模式：上次注入后的时间戳 */
   private lastDictationTs = 0;
+  /** TTS 播放期间暂时屏蔽转录（防止 TTS 声音自回音污染转录缓存） */
+  private ttsMuted = false;
 
   /** 听写合并窗口（毫秒）：用户停说 1.5s 后认为一句话结束 */
   static readonly DICTATION_MERGE_MS = 1500;
@@ -235,7 +237,21 @@ class HearingManager extends EventEmitter {
 
   // ── 转录接收 ────────────────────────────────────────────────────
 
+  /** 暂停转录处理（TTS 播放期间调用，防止 AI 声音被自己听到） */
+  pauseForTTS(): void {
+    this.ttsMuted = true;
+    console.log('[HearingManager] TTS 开始，暂停转录接收');
+  }
+
+  /** 恢复转录处理（TTS 播放结束后调用） */
+  resumeAfterTTS(): void {
+    this.ttsMuted = false;
+    console.log('[HearingManager] TTS 结束，恢复转录接收');
+  }
+
   onTranscription(result: TranscriptionResult): void {
+    // TTS 播放期间忽略转录，防止 AI 声音自回音
+    if (this.ttsMuted) return;
     this.transcriptionCount++;
     this.buffer.append(result);
     this.emit('transcription', result);

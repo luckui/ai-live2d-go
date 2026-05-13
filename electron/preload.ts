@@ -48,6 +48,10 @@ contextBridge.exposeInMainWorld('ttsAPI', {
   /** 监听主进程推送的 TTS 播放请求（用于直播间等场景） */
   onPlay: (cb: (text: string) => void) =>
     ipcRenderer.on('tts:play', (_e, payload: { text: string }) => cb(payload.text)),
+  /** TTS 开始播放时暂停听力（防止 AI 声音被麦克风听到） */
+  pauseHearing: () => ipcRenderer.invoke('hearing:pause-for-tts'),
+  /** TTS 播放结束后恢复听力 */
+  resumeHearing: () => ipcRenderer.invoke('hearing:resume-from-tts'),
 });
 
 contextBridge.exposeInMainWorld('ttsSettingsAPI', {

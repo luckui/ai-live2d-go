@@ -3,6 +3,7 @@ import { fetchCompletion } from '../llmClient';
 import type { EphemeralLiveCredentials, LiveEvent, StreamerReply, StreamerSessionConfig, StreamerStatus } from './types';
 import { DanmuPool } from './danmuPool';
 import { createPlatformAdapter, type PlatformAdapter } from './platforms';
+import { SESSION_SYSTEM_PROMPT } from './streamerPrompts';
 
 class StreamerSessionManager {
   private config: StreamerSessionConfig | null = null;
@@ -49,7 +50,8 @@ class StreamerSessionManager {
 
       this.adapter.on('error', (err) => {
         this.lastError = err.message;
-        console.error('[StreamerSession] Platform adapter error:', err);
+        // 只打印 message，避免 Error 对象中潜在的网络请求细节（含 URL/headers）被暴露
+        console.error('[StreamerSession] Platform adapter error:', err.message);
       });
 
       this.adapter.on('disconnected', () => {
@@ -65,9 +67,9 @@ class StreamerSessionManager {
       console.error('[StreamerSession] Failed to start adapter:', err);
     }
 
-    this.timer = setInterval(() => {
-      void this.flushDue();
-    }, 2_000);
+    // 注意：不在 session 内部启动 flush timer。
+    // streamerController 是唯一编排者，负责 poll → 生成 → TTS 的完整流程。
+    // 若在此处也定时 flushDue，会抢先消费 pool 但无法触发 TTS，导致弹幕被吞。
 
     return this.status();
   }
@@ -147,19 +149,37 @@ class StreamerSessionManager {
     return true;
   }
 
+  setTopic(topic: string): boolean {
+    if (!this.config) {
+      console.warn('[StreamerSession] setTopic: no active session');
+      return false;
+    }
+    this.config.topic = topic;
+    console.log(`[StreamerSession] topic updated: "${topic}"`);
+    return true;
+  }
+
   listReplies(limit = 10): StreamerReply[] {
     return this.replies.slice(-limit);
   }
 
   private async flushDue(force = false): Promise<StreamerReply | null> {
     if (!this.config || this.runningGeneration) return null;
+
+    // autoReply 检查放在 nextReply 之前，避免事件被 pop 后又不生成 AI/TTS 造成丢弹幕
+    if (!this.config.autoReply && !force) {
+      console.log('[StreamerSession] autoReply=false and not forced, skipping');
+      return null;
+    }
+
     const next = this.pool.nextReply(this.config.topic);
     if (!next) return null;
 
     console.log(`[StreamerSession] flushDue called: force=${force}, autoReply=${this.config.autoReply}, kind=${next.kind}, events=${next.eventIds?.length || 0}`);
 
-    if (!this.config.autoReply && !force) {
-      console.log('[StreamerSession] autoReply=false and not forced, skipping AI generation');
+    // funded_request 不走简单 LLM 回复，直接透传给 streamerController 处理工具循环
+    if (next.kind === 'funded_request') {
+      console.log(`[StreamerSession] funded_request → 透传给 streamerController`);
       this.replies.push(next);
       return next;
     }
@@ -173,7 +193,7 @@ class StreamerSessionManager {
       console.log(`[StreamerSession] Prompt preview: ${next.prompt.slice(0, 200)}...`);
       
       const data = await fetchCompletion(provider, [
-        { role: 'system', content: '你只输出直播主播要说的话，不输出分析、标签或 Markdown。' },
+        { role: 'system', content: SESSION_SYSTEM_PROMPT },
         { role: 'user', content: next.prompt },
       ]);
       next.reply = data.choices[0]?.message.content?.trim() ?? '';

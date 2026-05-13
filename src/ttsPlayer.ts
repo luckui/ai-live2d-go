@@ -129,6 +129,10 @@ let _playGeneration = 0;
 type TtsAPI = {
   isEnabled(): Promise<boolean>;
   speak(text: string): Promise<{ data: string } | null>;
+  /** 可选：TTS 播放时暂停听力（如果听力未开启，调用无副作用） */
+  pauseHearing?: () => Promise<void>;
+  /** 可选：TTS 结束后恢复听力 */
+  resumeHearing?: () => Promise<void>;
 };
 
 // ── WebAudio 共享 AudioContext + 实时口型 ─────────────────────────
@@ -266,6 +270,8 @@ export async function playTTS(text: string, onDuration?: (ms: number) => void): 
 
   // 进入讲话状态：立即触发 Tap 动作，退出 Idle 循环
   getLiveModel()?.setSpeaking(true);
+  // 暂停听力（防止 AI 声音被麦克风/系统音频录入）
+  ttsAPI.pauseHearing?.().catch(() => {});
 
   // ① 并发发起全部句子的 TTS 请求
   const requests = sentences.map(s => ttsAPI.speak(s));
@@ -297,6 +303,7 @@ export async function playTTS(text: string, onDuration?: (ms: number) => void): 
       console.log('[TTS] 队列已被新请求取消，停止播放');
       stopLipSync();
       getLiveModel()?.setSpeaking(false);
+      ttsAPI.resumeHearing?.().catch(() => {});
       return;
     }
 
@@ -320,6 +327,7 @@ export async function playTTS(text: string, onDuration?: (ms: number) => void): 
   // 所有句子播放完毕，退出讲话状态，自然回归 Idle
   stopLipSync();
   getLiveModel()?.setSpeaking(false);
+  ttsAPI.resumeHearing?.().catch(() => {});
   console.log('[TTS] 全部句子播放完成');
 }
 
@@ -336,13 +344,11 @@ export function registerTTSPlayListener(): void {
 
   ttsAPI.onPlay((text: string) => {
     console.log('[TTS] 收到主进程推送的文本，调用 playTTS():', text.substring(0, 50));
-    // 复用聊天框的 TTS 逻辑，并显示打字机气泡
+    // 复用聊天框的 TTS 逻辑并显示打字机气泡（pause/resume hearing 已内置于 playTTS 内部）
     playTTS(text, (actualMs) => {
       if (actualMs > 0) {
-        // TTS 解码成功：打字机略快于声音
         showTypewriterBubble(text, Math.max(300, actualMs * 0.92));
       } else {
-        // TTS 启用但服务器不可达：回退到估算速度
         showTypewriterBubble(text, text.length * 60);
       }
     }).catch((e) => console.error('[TTS] playTTS error:', e));

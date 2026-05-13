@@ -59,6 +59,8 @@ import manageLive2dTool from './impl/manageLive2d';
 import asyncTaskTool from './impl/asyncTask';
 import scheduleTaskTool from './impl/scheduleTask';
 import manageBilibiliLiveTool from './impl/manageBilibiliLive';
+import watchBilibiliVideoTool from './impl/watchBilibiliVideo';  // 🆕 B站视频观看工具
+import speakTool from './impl/speak';                           // 🆕 TTS 朗读工具
 
 import { setToolRegistry } from './toolContext';
 
@@ -106,7 +108,9 @@ const registry = new ToolRegistry()
   .register(manageLive2dTool)
   .register(manageBilibiliLiveTool)
   .register(asyncTaskTool)
-  .register(scheduleTaskTool);
+  .register(scheduleTaskTool)
+  .register(watchBilibiliVideoTool)  // 🆕 B站视频观看
+  .register(speakTool);              // 🆕 TTS 朗读
 
 // 批量注册所有浏览器工具
 for (const tool of browserTools) {

@@ -13,6 +13,7 @@ import { buildChatPrompt } from './prompts/chat';
 import { buildAgentPrompt } from './prompts/agent';
 import { buildDeveloperPrompt } from './prompts/developer';
 import { buildStreamerPrompt } from './prompts/streamer';
+import { browserSession } from './tools/impl/browserSession';
 
 // ── 工具调用调试事件 ─────────────────────────────────────
 /** 单次工具调用的调试记录（推送给渲染层展示） */
@@ -85,9 +86,14 @@ function getLatestRealUserText(messages: ChatMessage[]): string {
   return '';
 }
 
+/** 除 browser_ 前缀工具外，还有少数直接使用 browserSession 的工具 */
+const BROWSER_SESSION_TOOLS = new Set(['watch_bilibili_video']);
+
 function hasBrowserTools(toolSchemas?: ToolSchema[]): boolean {
   if (!toolSchemas?.length) return false;
-  return toolSchemas.some((t) => t.function.name.startsWith('browser_'));
+  return toolSchemas.some((t) =>
+    t.function.name.startsWith('browser_') || BROWSER_SESSION_TOOLS.has(t.function.name)
+  );
 }
 
 function isLikelyBrowseIntent(userText: string): boolean {
@@ -447,7 +453,19 @@ export async function sendChatMessage(
     }
 
     const tools = toolRegistry.isEmpty ? undefined : toolRegistry.getSchemasForToolset(enabledToolsets);
-    replyContent = await callWithToolLoop(provider, messages, tools, conversationId);
+
+    // streamer 模式下：若本轮对话包含浏览器工具，需占用浏览器互斥锁，
+    // 防止与 funded_request 工具循环（processFundedRequest）同时操控同一 Playwright page。
+    // 普通模式/无浏览器工具时无需加锁，零开销。
+    const needBrowserLock = currentAgentMode === 'streamer' && hasBrowserTools(tools);
+    const releaseBrowserLock = needBrowserLock
+      ? await browserSession.mutex.acquire('chat')
+      : null;
+    try {
+      replyContent = await callWithToolLoop(provider, messages, tools, conversationId);
+    } finally {
+      releaseBrowserLock?.();
+    }
   } catch (e) {
     replyContent = `（请求失败：${(e as Error).message}）`;
   }
@@ -461,6 +479,15 @@ export async function sendChatMessage(
 
   // 记录消息活跃时间（供空闲调度器判断何时触发后台总结，不再在热路径调用 LLM）
   recordMessageActivity();
+
+  // streamer 模式：主播在聊天界面发送消息，AI 回复同样要经过 TTS 播报给直播间
+  // 原则：AI 生成文字后自动送 TTS，不需要 AI 主动调用 speak 工具
+  // 动态 import 避免 aiService ↔ streamerController ↔ main 静态循环依赖
+  if (currentAgentMode === 'streamer' && replyContent.trim() && !replyContent.startsWith('（请求失败：')) {
+    void import('./streaming/streamerController').then(({ streamerController }) => {
+      void streamerController.speak(replyContent);
+    });
+  }
 
   // 6. 首轮对话自动用用户首句命名
   const allUserMsgs = getMessages(conversationId).filter((m) => m.role === 'user');

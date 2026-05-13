@@ -53,11 +53,58 @@ const STEALTH_SCRIPT = `
   });
 `;
 
+/**
+ * 简单异步互斥锁 — 同一时间只允许一个"所有者"使用浏览器，
+ * 其余调用者进入 Promise 队列等待，不会丢失请求。
+ *
+ * 使用方式（在 AI 工具循环入口处）：
+ *   const release = await browserSession.acquireLock('funded');
+ *   try { ... } finally { release(); }
+ */
+class BrowserMutex {
+  private _locked = false;
+  private _owner: string | null = null;
+  private _queue: Array<() => void> = [];
+
+  async acquire(owner: string): Promise<() => void> {
+    if (!this._locked) {
+      this._locked = true;
+      this._owner = owner;
+      return () => this._release();
+    }
+    // 已被占用 → 排队等待
+    console.log(`[BrowserMutex] "${owner}" waiting; browser held by "${this._owner}"`);
+    return new Promise<() => void>(resolve => {
+      this._queue.push(() => {
+        this._locked = true;
+        this._owner = owner;
+        resolve(() => this._release());
+      });
+    });
+  }
+
+  private _release(): void {
+    const next = this._queue.shift();
+    if (next) {
+      next();
+    } else {
+      this._locked = false;
+      this._owner = null;
+    }
+  }
+
+  get isLocked(): boolean { return this._locked; }
+  get currentOwner(): string | null { return this._owner; }
+}
+
 class BrowserSession {
   private _context: BrowserContext | null = null;
   private _page: Page | null = null;
   private _consoleErrors: Array<{ type: string; text: string; timestamp: number }> = [];
   private _pageErrors: Array<{ message: string; timestamp: number }> = [];
+
+  /** 跨 AI 循环互斥锁：防止 chat / funded_request / scheduled_task 同时操控浏览器 */
+  readonly mutex = new BrowserMutex();
 
   /**
    * 获取或创建当前 Page，自动启动持久化浏览器。
@@ -76,6 +123,8 @@ class BrowserSession {
           '--disable-blink-features=AutomationControlled', // 关键：关闭自动化控制标志
           '--disable-dev-shm-usage',
           '--disable-infobars',
+          '--autoplay-policy=no-user-gesture-required', // 允许自动播放（含音频）
+          '--disable-features=PreloadMediaEngagementData,MediaEngagementBypassAutoplayPolicies', // 取消静音白名单限制
         ],
         ignoreDefaultArgs: ['--enable-automation'], // 去掉 --enable-automation 参数
       });

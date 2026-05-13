@@ -66,7 +66,6 @@ export class BiliClient extends EventEmitter {
    */
   async start(): Promise<void> {
     this.stopped = false;
-    this.reconnectDelay = 1000;
 
     try {
       // 1. 获取真实 room_id
@@ -94,50 +93,81 @@ export class BiliClient extends EventEmitter {
     console.log('[BiliClient] Stopped');
   }
 
+  /** 内置兜底服务器（API 节点全部失败时最后尝试） */
+  private static readonly FALLBACK_SERVERS: Array<{ host: string; port: number; wss_port: number }> = [
+    { host: 'broadcastlv.chat.bilibili.com', port: 2243, wss_port: 443 },
+    { host: 'broadcastlv.chat.bilibili.com', port: 2245, wss_port: 2245 },
+  ];
+
   /**
    * 尝试连接服务器列表
+   * - 随机打乱 API 返回的服务器顺序，避免总是压同一台边缘节点
+   * - 追加内置兜底服务器，确保至少有一条退路
    */
   private async connectToServers(
     servers: Array<{ host: string; port: number; wss_port: number }>,
     token: string
   ): Promise<void> {
-    for (const server of servers) {
+    // 随机打乱，分散连接压力
+    const shuffled = [...servers].sort(() => Math.random() - 0.5);
+    // 追加兜底（过滤掉 API 已包含的主机）
+    const extra = BiliClient.FALLBACK_SERVERS.filter(
+      f => !servers.some(s => s.host === f.host)
+    );
+    const allServers = [...shuffled, ...extra];
+
+    for (const server of allServers) {
       if (this.stopped) return;
 
+      const wsUrl = `wss://${server.host}:${server.wss_port}/sub`;
+      console.log(`[BiliClient] Connecting to ${wsUrl}`);
       try {
-        const wsUrl = `wss://${server.host}:${server.wss_port}/sub`;
-        console.log(`[BiliClient] Connecting to ${wsUrl}`);
-
         await this.connect(wsUrl, token);
-        return; // 连接成功，退出循环
+        return; // 连接 + 认证成功
       } catch (err) {
-        console.warn(`[BiliClient] Failed to connect to ${server.host}:`, err);
-        continue; // 尝试下一个服务器
+        console.warn(`[BiliClient] ${server.host} failed: ${(err as Error).message}`);
+        // 继续尝试下一台
       }
     }
 
-    throw new Error('All servers failed');
+    throw new Error('All WebSocket servers failed');
   }
 
   /**
-   * 连接到单个 WebSocket 服务器
+   * 连接到单个 WebSocket 服务器，并等待认证完成。
+   *
+   * Promise 语义：
+   *   resolve — 认证成功（收到 OP=8 且 success=true）
+   *   reject  — 任何错误：连接超时、auth 超时、ws error、认证前 close
+   *
+   * close 发生在认证 *之后* 时不 reject（连接已成功建立），而是触发正常重连流程。
    */
   private connect(wsUrl: string, token: string): Promise<void> {
     return new Promise((resolve, reject) => {
+      let settled = false;
+      const settle = (fn: () => void) => {
+        if (!settled) { settled = true; fn(); }
+      };
+
       const ws = new WebSocket(wsUrl, {
         headers: {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+          'Origin': 'https://live.bilibili.com',
+          'Referer': `https://live.bilibili.com/${this.config.roomId}`,
           ...(this.config.cookie ? { Cookie: this.config.cookie } : {}),
         },
       });
 
-      const timeout = setTimeout(() => {
-        ws.close();
-        reject(new Error('Connection timeout'));
+      // TCP 连接超时（10s）
+      const connTimeout = setTimeout(() => {
+        ws.terminate();
+        settle(() => reject(new Error('connection timeout')));
       }, 10000);
 
+      let authTimeout: NodeJS.Timeout | null = null;
+
       ws.on('open', () => {
-        clearTimeout(timeout);
+        clearTimeout(connTimeout);
         console.log('[BiliClient] WebSocket connected');
         this.emit('connected');
 
@@ -145,6 +175,12 @@ export class BiliClient extends EventEmitter {
         const uid = this.config.uid ?? 0;
         const authPacket = makeAuthPacket(this.realRoomId, uid, token);
         ws.send(authPacket);
+
+        // 认证超时（8s）：服务端接受连接但不响应认证视为失败
+        authTimeout = setTimeout(() => {
+          ws.terminate();
+          settle(() => reject(new Error('auth timeout — no response from server')));
+        }, 8000);
       });
 
       ws.on('message', async (data: Buffer) => {
@@ -156,38 +192,41 @@ export class BiliClient extends EventEmitter {
       });
 
       ws.on('error', (err) => {
-        clearTimeout(timeout);
+        clearTimeout(connTimeout);
+        if (authTimeout) clearTimeout(authTimeout);
+        this.off('authenticated', onAuthenticated);
         console.error('[BiliClient] WebSocket error:', err);
         this.emit('error', err);
-        reject(err);
+        settle(() => reject(err));
       });
 
       ws.on('close', (code, reason) => {
-        clearTimeout(timeout);
+        clearTimeout(connTimeout);
+        if (authTimeout) clearTimeout(authTimeout);
+        this.off('authenticated', onAuthenticated);
         console.log(`[BiliClient] WebSocket closed: ${code} ${reason}`);
         this.cleanup();
         this.emit('disconnected', `${code} ${reason}`);
-        
-        if (!this.stopped) {
+
+        if (!settled) {
+          // 认证完成前断开 → 让 connectToServers 继续尝试下一台
+          settle(() => reject(new Error(`closed before auth: ${code}`)));
+        } else if (!this.stopped) {
+          // 正常运行中断开 → 从头重连（重新获取 token + 选服务器）
           this.scheduleReconnect();
         }
       });
 
       // 认证成功回调
       const onAuthenticated = () => {
+        if (authTimeout) clearTimeout(authTimeout);
         this.ws = ws;
         this.startHeartbeat();
-        this.reconnectDelay = 1000; // 重置重连延迟
-        resolve();
+        this.reconnectDelay = 1000; // 重置退避延迟
+        settle(() => resolve());
       };
 
-      // 临时监听认证事件
       this.once('authenticated', onAuthenticated);
-      
-      // 超时后移除监听器
-      setTimeout(() => {
-        this.off('authenticated', onAuthenticated);
-      }, 15000);
     });
   }
 
@@ -211,7 +250,11 @@ export class BiliClient extends EventEmitter {
             console.log('[BiliClient] Authenticated');
             this.emit('authenticated');
           } else {
-            console.error('[BiliClient] Auth failed:', parsed.data);
+            // 不打印完整响应体（可能含 uid / token 片段）
+            const authCode = typeof parsed.data === 'object' && parsed.data !== null
+              ? (parsed.data as Record<string, unknown>).code ?? '?'
+              : parsed.data;
+            console.error(`[BiliClient] Auth failed: code=${authCode}`);
             this.emit('error', new Error('Auth failed'));
             this.ws?.close();
           }

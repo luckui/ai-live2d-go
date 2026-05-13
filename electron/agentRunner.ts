@@ -48,6 +48,7 @@ function buildChildSystemPrompt(task: DBTask): string {
     '## 规则',
     '- 你是后台任务，用户看不到你的中间过程，只能看到最终结果',
     '- 专注完成任务，不要闲聊',
+    '- 如果工具返回要求你调用 speak 朗读，必须立即调用 speak，不可跳过或用文字代替',
     '- 完成后用简洁的自然语言输出结果摘要',
     '- 如果遇到无法解决的问题，说明原因并给出已完成的部分结果',
   );
@@ -112,6 +113,12 @@ export async function runChildAgent(
   const toolSchemas = getChildToolSchemas(task);
   const withTools = !!toolSchemas?.length;
 
+  console.log(
+    `[AgentRunner] 任务启动: "${task.title}" (${task.id})\n` +
+    `  可用工具数: ${toolSchemas?.length ?? 0}  最大轮次: ${maxRounds}\n` +
+    `  prompt: ${task.prompt.length > 120 ? task.prompt.slice(0, 120) + '…' : task.prompt}`,
+  );
+
   const msgBuf: ChatMessage[] = [
     { role: 'system', content: systemPrompt },
     { role: 'user', content: task.prompt },
@@ -121,14 +128,31 @@ export async function runChildAgent(
     if (signal.aborted) throw new Error('任务已被取消');
 
     onProgress(round / maxRounds, `执行中 (轮次 ${round + 1}/${maxRounds})`);
+    console.log(`[AgentRunner] "${task.title}" 轮次 ${round + 1}/${maxRounds} — 等待 LLM 响应…`);
 
     const data = await fetchCompletion(provider, msgBuf, withTools ? toolSchemas : undefined, signal);
     const choice = data.choices[0];
 
     // 无工具调用 → 返回最终文本
     if (choice.finish_reason !== 'tool_calls' || !choice.message.tool_calls?.length) {
-      return stripThinkTags(choice.message.content?.trim() ?? '');
+      const finalText = stripThinkTags(choice.message.content?.trim() ?? '');
+      console.log(
+        `[AgentRunner] "${task.title}" 第 ${round + 1} 轮结束（无工具调用，返回最终结果）\n` +
+        `  结果预览: ${finalText.slice(0, 100)}${finalText.length > 100 ? '…' : ''}`,
+      );
+      return finalText;
     }
+
+    // 有工具调用 → 打印工具列表
+    const toolNames = choice.message.tool_calls.map((tc) => {
+      let argsPreview = '';
+      try {
+        const parsed = JSON.parse(tc.function.arguments);
+        argsPreview = JSON.stringify(parsed).slice(0, 80);
+      } catch { argsPreview = tc.function.arguments.slice(0, 80); }
+      return `${tc.function.name}(${argsPreview})`;
+    });
+    console.log(`[AgentRunner] "${task.title}" 轮次 ${round + 1} 工具调用:\n  ${toolNames.join('\n  ')}`);
 
     // 有工具调用 → 追加 assistant 消息
     msgBuf.push({
@@ -146,7 +170,13 @@ export async function runChildAgent(
       })
     );
 
-    // 回填结果
+    // 回填结果，同时打印摘要
+    for (const { tc, result } of execResults) {
+      const resultPreview = typeof result === 'object' && result !== null
+        ? JSON.stringify(result).slice(0, 120)
+        : String(result).slice(0, 120);
+      console.log(`[AgentRunner] "${task.title}" 工具返回 ${tc.function.name}: ${resultPreview}${resultPreview.length >= 120 ? '…' : ''}`);
+    }
     for (const { tc, result } of execResults) {
       if (isToolImageResult(result)) {
         msgBuf.push({ role: 'tool', tool_call_id: tc.id, content: result.text });

@@ -65,7 +65,7 @@ export async function getDanmuConfig(
         };
       }
     } catch (err) {
-      console.warn('[biliApi] New API failed, fallback to old API:', err);
+      console.warn('[biliApi] New API failed, fallback to old API:', (err as Error).message);
     }
   }
 

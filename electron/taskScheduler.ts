@@ -264,11 +264,19 @@ class TaskScheduler {
           }
 
           // 创建并启动后台任务
+          const meta = schedule.metadata ? JSON.parse(schedule.metadata) : undefined;
+          const toolsets: string[] = Array.isArray(meta?.toolsets) ? meta.toolsets : ['agent'];
+          console.log(
+            `[TaskScheduler] ▶ 触发定时任务: "${schedule.task_title}" (${schedule.id})\n` +
+            `  toolsets: [${toolsets.join(', ')}]\n` +
+            `  prompt: ${schedule.prompt.length > 120 ? schedule.prompt.slice(0, 120) + '…' : schedule.prompt}`,
+          );
+
           taskManager.createAndStart({
             title: schedule.task_title,
             prompt: schedule.prompt,
             type: 'cron',
-            metadata: schedule.metadata ? JSON.parse(schedule.metadata) : undefined,
+            metadata: meta,
           });
 
           // 更新调度记录
@@ -288,7 +296,11 @@ class TaskScheduler {
             enabled: isLastRun ? 0 : 1,
           });
 
-          console.log(`[TaskScheduler] 触发定时任务: ${schedule.task_title} (${schedule.id})`);
+          if (!isLastRun && nextRun) {
+            console.log(`[TaskScheduler] ✔ 已入队，下次执行: ${new Date(nextRun).toLocaleString('zh-CN')}`);
+          } else if (isLastRun) {
+            console.log(`[TaskScheduler] ✔ 已入队（最后一次，执行后自动禁用）`);
+          }
         } catch (err) {
           console.error(`[TaskScheduler] 执行调度任务失败: ${schedule.id}`, err);
         }

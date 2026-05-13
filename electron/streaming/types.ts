@@ -29,6 +29,8 @@ export interface SanitizedLiveEvent extends Omit<LiveEvent, 'text' | 'uname' | '
   giftName: string;
   fingerprint: string;
   riskFlags: string[];
+  /** 由 DanmuPool 动态标记：此弹幕是由该 uid 的礼物信用驱动的请求 */
+  fundedByUid?: string;
 }
 
 export interface StreamerSessionConfig {
@@ -47,10 +49,17 @@ export interface EphemeralLiveCredentials {
 export interface StreamerReply {
   id: string;
   createdAt: number;
-  kind: 'gift_thanks' | 'danmu_single' | 'danmu_batch' | 'topic_control';
+  kind: 'gift_thanks' | 'danmu_single' | 'danmu_batch' | 'topic_control' | 'funded_request';
   prompt: string;
   reply?: string;
   eventIds: string[];
+  /** funded_request 专用：送礼物的观众信息 */
+  fundedBy?: {
+    uid: string;
+    uname: string;
+    giftName: string;
+    giftValue: number;
+  };
 }
 
 export interface StreamerStatus {

@@ -189,6 +189,10 @@ export function convertToLiveEvent(msg: any, roomId: number): LiveEvent | null {
 
   // 礼物
   if (cmd === 'SEND_GIFT') {
+    // price = 单价（金瓜子），total_coin = 本次总消耗（金瓜子），100 金瓜子 = 1 电池
+    // coin_type = 'gold'（付费）/ 'silver'（免费辣条等）
+    const isGold = String(msg.data?.coin_type ?? 'silver') === 'gold';
+    const totalCoin = Number(msg.data?.total_coin ?? 0);
     return {
       id: `gift-${ts}-${Math.random().toString(16).slice(2)}`,
       platform: 'bilibili',
@@ -198,13 +202,14 @@ export function convertToLiveEvent(msg: any, roomId: number): LiveEvent | null {
       uname: String(msg.data?.uname ?? ''),
       giftName: String(msg.data?.giftName ?? ''),
       giftCount: Number(msg.data?.num ?? 1),
-      giftValue: Number(msg.data?.price ?? 0),
+      giftValue: isGold ? Math.round(totalCoin / 100) : 0, // 单位：电池
       raw: msg,
     };
   }
 
   // SC（醒目留言）
   if (cmd === 'SUPER_CHAT_MESSAGE') {
+    // price = SC 金额（元），1 元 = 10 电池
     return {
       id: `sc-${ts}-${Math.random().toString(16).slice(2)}`,
       platform: 'bilibili',
@@ -213,13 +218,14 @@ export function convertToLiveEvent(msg: any, roomId: number): LiveEvent | null {
       uid: String(msg.data?.uid ?? ''),
       uname: String(msg.data?.user_info?.uname ?? ''),
       text: String(msg.data?.message ?? ''),
-      giftValue: Number(msg.data?.price ?? 0),
+      giftValue: Math.round(Number(msg.data?.price ?? 0) * 10), // 单位：电池
       raw: msg,
     };
   }
 
   // 上舰
   if (cmd === 'GUARD_BUY') {
+    // price = 金瓜子，100 金瓜子 = 1 电池（舰长 198元 = 198000 金瓜子 = 1980 电池）
     return {
       id: `guard-${ts}-${Math.random().toString(16).slice(2)}`,
       platform: 'bilibili',
@@ -228,7 +234,7 @@ export function convertToLiveEvent(msg: any, roomId: number): LiveEvent | null {
       uid: String(msg.data?.uid ?? ''),
       uname: String(msg.data?.username ?? ''),
       giftName: `guard-${msg.data?.guard_level ?? 0}`,
-      giftValue: Number(msg.data?.price ?? 0),
+      giftValue: Math.round(Number(msg.data?.price ?? 0) / 100), // 单位：电池
       raw: msg,
     };
   }

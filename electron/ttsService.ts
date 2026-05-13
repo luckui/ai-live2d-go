@@ -99,19 +99,38 @@ class TTSService {
 
   async health(): Promise<{ ok: boolean; status?: number; body?: string; error?: string }> {
     if (!this._currentUrl) {
-      console.log('[TTS] health: 未配置 URL');
       return { ok: false, error: 'TTS 未配置' };
     }
-    try {
-      console.log(`[TTS] health: 检查 ${this._currentUrl}/health`);
-      const resp = await fetch(`${this._currentUrl}/health`, { signal: AbortSignal.timeout(5000) });
-      const body = await resp.text().catch(() => '');
-      console.log(`[TTS] health: status=${resp.status}, ok=${resp.ok}`);
-      return { ok: resp.ok, status: resp.status, body: body.slice(0, 200) };
-    } catch (e) {
-      console.warn(`[TTS] health: 失败 - ${String(e)}`);
-      return { ok: false, error: String(e) };
+
+    // 探测策略：
+    //   1. HEAD / — 最轻量，任何 HTTP 响应（含 404）均说明服务进程在线
+    //   2. HEAD /health — 兼容有专用 health 端点的服务
+    //   3. GET /health — 最后降级，获取响应体
+    // GPT-SoVITS 等推理服务在 GPU 忙时 /health 会被阻塞，但 HEAD / 通常仍可达。
+    // 任意 HTTP 状态码均视为"在线"，不要求 resp.ok。
+    const TIMEOUT_MS = 3000;
+    const probes: Array<{ method: string; path: string }> = [
+      { method: 'HEAD', path: '/' },
+      { method: 'HEAD', path: '/health' },
+      { method: 'GET',  path: '/health' },
+    ];
+
+    for (const { method, path } of probes) {
+      try {
+        const resp = await fetch(`${this._currentUrl}${path}`, {
+          method,
+          signal: AbortSignal.timeout(TIMEOUT_MS),
+        });
+        const body = method === 'GET' ? await resp.text().catch(() => '') : undefined;
+        console.log(`[TTS] health: ${method} ${path} → ${resp.status}`);
+        return { ok: true, status: resp.status, body: body?.slice(0, 200) };
+      } catch {
+        // 继续尝试下一个探针
+      }
     }
+
+    console.log(`[TTS] health: 所有探针均超时，服务不可达 (${this._currentUrl})`);
+    return { ok: false, error: '服务不可达（所有探针超时）' };
   }
 }
 
