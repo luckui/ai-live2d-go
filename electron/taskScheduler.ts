@@ -275,6 +275,7 @@ class TaskScheduler {
           taskManager.createAndStart({
             title: schedule.task_title,
             prompt: schedule.prompt,
+            conversationId: typeof meta?.conversationId === 'string' ? meta.conversationId : undefined,
             type: 'cron',
             metadata: meta,
           });
@@ -381,11 +382,13 @@ class TaskScheduler {
     const s = getSchedule(scheduleId);
     if (!s) return false;
 
+    const triggerMeta = s.metadata ? JSON.parse(s.metadata) : undefined;
     taskManager.createAndStart({
       title: s.task_title,
       prompt: s.prompt,
+      conversationId: typeof triggerMeta?.conversationId === 'string' ? triggerMeta.conversationId : undefined,
       type: 'cron',
-      metadata: s.metadata ? JSON.parse(s.metadata) : undefined,
+      metadata: triggerMeta,
     });
 
     updateSchedule(scheduleId, { last_run_at: Date.now() });

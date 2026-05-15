@@ -121,6 +121,21 @@ const aiConfig: AIConfig = {
       systemPrompt: buildSystemPrompt(),
     },
 
+    'doubao-agent-plan': {
+      type: 'openai-compatible',
+      name: '豆包 Agent Plan',
+      // ⚠️ 警告：此配置使用火山引擎 Agent Plan API
+      // 仅适用于 AI 编程工具场景，非编程用途可能违反服务条款导致账号封禁
+      // 文档：https://www.volcengine.com/docs/82379/1925114
+      baseUrl: 'https://ark.cn-beijing.volces.com/api/plan/v3',  // Agent Plan 专用端点
+      apiKey: process.env['DOUBAO_API_KEY'] ?? '',  // 使用同一个 API Key
+      model: 'doubao-seed-2.0-code',  // Agent Plan 支持的模型
+      temperature: 0.85,
+      maxTokens: 2048,
+      enabledToolsets: ['default'],
+      systemPrompt: buildSystemPrompt(),
+    },
+
     qwen35: {
       type: 'openai-compatible',
       name: 'Qwen3.5-4B（本地）',

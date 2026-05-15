@@ -1,19 +1,22 @@
 /**
  * Skill: speak
  *
- * TTS 朗读工具：将指定文字通过语音合成大声朗读出来。
+ * 主动通知工具：将指定文字注入对话聊天窗口并通过 TTS 朗读出来。
  *
  * 设计目的：
- *   - 供后台 agent 任务（schedule_task / async_task）主动触发 TTS
- *   - 典型场景：watch_bilibili_video 返回视频信息后，agent 调用 speak 朗读解说词
+ *   - 供后台 agent 任务（schedule_task / async_task）主动通知用户
+ *   - 消息会同时出现在聊天窗口（可见）和 TTS 播报（可听）
+ *   - 典型场景：后台任务执行完毕后，agent 调用本工具向用户汇报结果
  *   - 聊天路径（sendChatMessage）会自动 TTS，无需显式调用本工具
  *
- * TTS 链路：
- *   speak → playTTSAudio → mainWin.webContents.send('tts:play') → 渲染进程合成+播放
+ * 消息链路：
+ *   speak → injectAgentMessage → 保存到对话历史 + chat:agent-message IPC + TTS 播报
+ *   如无父对话（如独立 cron 任务），则仅 TTS 播报作为降级方案
  */
 
 import type { ToolDefinition } from '../types';
-import { playTTSAudio } from '../../main';
+import { injectAgentMessage, playTTSAudio } from '../../main';
+import { taskManager } from '../../taskManager';
 
 interface SpeakParams {
   text: string;
@@ -25,16 +28,16 @@ const speakTool: ToolDefinition<SpeakParams> = {
     function: {
       name: 'speak',
       description:
-        '🔊 TTS 朗读工具：将文字通过语音合成大声朗读给观众听。\n' +
-        '用法：直接把要朗读的解说词、通知、总结等内容作为 text 传入，工具立即播放，无需其他操作。\n' +
-        '典型用途：watch_bilibili_video 返回视频信息后，把自行编写的解说词填入 text 调用本工具。\n' +
-        '⚠️ 只有 TTS 服务已启动时才有效；text 建议 30～150 字，过长自动截断。',
+        '🔔 主动通知工具：将消息显示在聊天窗口并通过语音朗读给用户。\n' +
+        '用法：把要告知用户的内容作为 text 传入，工具立即在聊天框显示消息气泡并触发 TTS 播报。\n' +
+        '典型用途：任务完成后汇报结果、中途进度更新、提醒用户注意事项。\n' +
+        '⚠️ text 建议 30～150 字，过长自动截断。',
       parameters: {
         type: 'object',
         properties: {
           text: {
             type: 'string',
-            description: '要朗读的文字内容（30～150 字为宜）',
+            description: '要通知用户的文字内容（30～150 字为宜）',
           },
         },
         required: ['text'],
@@ -42,7 +45,7 @@ const speakTool: ToolDefinition<SpeakParams> = {
     },
   },
 
-  async execute({ text }) {
+  async execute({ text }, context) {
     if (!text?.trim()) return '❌ text 不能为空';
 
     // 清理指令标记，只保留自然语言
@@ -53,9 +56,29 @@ const speakTool: ToolDefinition<SpeakParams> = {
 
     if (!cleanText) return '❌ 清理后文本为空';
 
-    // 截断超长文本（TTS 过长会阻塞播放队列）
+    // 截断超长文本
     const speakText = cleanText.length > 200 ? cleanText.slice(0, 200) + '…' : cleanText;
 
+    // 解析目标对话 ID：
+    //   - 直接对话（agent/chat 模式）：context.conversationId 本身即对话 ID
+    //   - 后台任务（agentRunner）：context.conversationId = 'task-{taskId}'，需从任务记录取父对话
+    const ctxConvId = context?.conversationId;
+    let targetConvId: string | null = null;
+    if (ctxConvId?.startsWith('task-')) {
+      const taskId = ctxConvId.slice(5);
+      const task = taskManager.getTask(taskId);
+      targetConvId = task?.conversation_id ?? null;
+    } else if (ctxConvId) {
+      targetConvId = ctxConvId;
+    }
+
+    if (targetConvId) {
+      // 注入聊天气泡（持久可见）+ TTS 播报
+      await injectAgentMessage(targetConvId, speakText);
+      return `✅ 已向对话注入消息并触发 TTS（${speakText.length} 字）`;
+    }
+
+    // 降级：仅 TTS（无对话上下文，如独立 cron 任务）
     const success = await playTTSAudio(speakText);
     if (success) {
       return `✅ 已发送 TTS 朗读（${speakText.length} 字）`;

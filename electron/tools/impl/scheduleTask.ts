@@ -100,7 +100,7 @@ const scheduleTaskTool: ToolDefinition<ScheduleTaskParams> = {
     },
   },
 
-  execute(params) {
+  execute(params, context) {
     const { action } = params;
 
     switch (action) {
@@ -110,12 +110,17 @@ const scheduleTaskTool: ToolDefinition<ScheduleTaskParams> = {
         if (!params.schedule?.trim()) return '❌ 缺少 schedule 参数';
 
         try {
+          // 将来源对话 ID 存入 metadata，供调度器触发时注入聊天通知
+          const schedMeta: Record<string, unknown> = {};
+          if (params.toolsets) schedMeta.toolsets = params.toolsets;
+          if (context?.conversationId) schedMeta.conversationId = context.conversationId;
+
           const sched = taskScheduler.createSchedule({
             title: params.title.trim(),
             prompt: params.prompt.trim(),
             schedule: params.schedule.trim(),
             repeatLimit: params.repeat_limit,
-            metadata: params.toolsets ? { toolsets: params.toolsets } : undefined,
+            metadata: Object.keys(schedMeta).length > 0 ? schedMeta : undefined,
           });
 
           const nextRun = sched.next_run_at

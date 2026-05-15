@@ -132,8 +132,8 @@ const asyncTaskTool: ToolDefinition<AsyncTaskParams> = {
         return `✅ 后台任务已创建并启动\n\n` +
           `📋 ${task.title}\n` +
           `🆔 ${task.id}\n\n` +
-          `任务正在后台执行，完成后会自动通知用户。\n` +
-          `你可以用 async_task status 查询进度。`;
+          `任务正在后台执行，完成或失败后会自动向当前对话推送通知消息。\n` +
+          `你可以用 async_task status 查询进度；无需轮询等待，任务完成时系统会主动通知。`;
       }
 
       case 'batch': {
@@ -164,7 +164,8 @@ const asyncTaskTool: ToolDefinition<AsyncTaskParams> = {
           `🆔 ${batchTask.id}\n` +
           `📊 共 ${params.items.length} 项，将并行处理\n\n` +
           `子任务会自动创建并排队执行（并发上限 3）。\n` +
-          `用 async_task status task_id="${batchTask.id}" 查询整体进度。`;
+          `全部完成后会自动向当前对话推送通知消息，无需轮询；\n` +
+          `也可用 async_task status task_id="${batchTask.id}" 随时查询整体进度。`;
       }
 
       case 'status': {

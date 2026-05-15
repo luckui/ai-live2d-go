@@ -88,6 +88,7 @@ import {
   getGlobalMemoryCursor,
   getStructuredGlobalMemory,
   setStructuredGlobalMemory,
+  addMessage as dbAddMessage,
 } from './db';
 import { sendChatMessage, setToolEventListener, stopCurrentAI } from './aiService';
 import { triggerConversationLeave, memoryManager, globalMemoryManager, runStartupCatchUp, startIdleScheduler } from './memory/index';
@@ -182,6 +183,49 @@ export async function playTTSAudio(text: string): Promise<boolean> {
   mainWin.webContents.send('tts:play', { text });
   console.log(`[TTS] playTTSAudio → 发送文本到渲染进程: ${text.substring(0, 50)}...`);
   return true;
+}
+
+/**
+ * 向指定对话注入一条 AI 消息（无需用户输入，适用于异步任务完成通知）
+ *
+ * 流程：
+ *   1. 持久化到对话历史（role: 'assistant'）
+ *   2. 推送 chat:agent-message 到渲染层 → 聊天窗口显示消息气泡
+ *   3. 触发 TTS 播报（如窗口可用）
+ *
+ * 供使用：
+ *   - speak 工具（后台 agent 主动通知用户）
+ */
+export async function injectAgentMessage(
+  conversationId: string,
+  content: string,
+): Promise<void> {
+  // 1. 持久化
+  dbAddMessage({ conversation_id: conversationId, role: 'assistant', content });
+
+  // 2. 推送到渲染层聊天窗口
+  if (mainWin && !mainWin.isDestroyed() && !mainWin.webContents.isDestroyed()) {
+    mainWin.webContents.send('chat:agent-message', { conversationId, content });
+  }
+
+  // 3. TTS 播报
+  await playTTSAudio(content);
+}
+
+/**
+ * 唤醒父对话的 AI：触发新一轮 AI 处理（仅用于 background/batch 异步任务完成后）。
+ *
+ * 与 injectAgentMessage 的区别：
+ *   injectAgentMessage = AI 主动说话（speak 工具，子智能体自己发）
+ *   sendAgentWakeup     = 系统通知主对话 AI「子任务结果来了，继续工作流」
+ *
+ * 仅对 background/batch 任务使用。cron 任务由子智能体自己用 speak 通知用户。
+ */
+export function sendAgentWakeup(conversationId: string, triggerText: string): void {
+  if (mainWin && !mainWin.isDestroyed() && !mainWin.webContents.isDestroyed()) {
+    mainWin.webContents.send('chat:agent-wakeup', { conversationId, text: triggerText });
+    console.log(`[Agent Wakeup] 唤醒对话 ${conversationId.slice(0, 8)}…: ${triggerText.slice(0, 80)}`);
+  }
 }
 
 function loadPersistedConfig(): void {
@@ -787,6 +831,9 @@ function createWindow(): void {
   taskManager.on('task:completed', (task) => {
     // 推送事件到渲染进程
     pushTaskEvent('task:completed')(task);
+    // 控制台输出
+    const typeLabel = task.type === 'cron' ? '定时' : task.type === 'batch' ? '批量' : '后台';
+    console.log(`[TaskManager] ✅ ${typeLabel}任务全部完成: 「${task.title}」 (${task.id.slice(0, 8)}…)`);
     // streamer 模式：定时任务完成后自动 TTS 播报结果
     // 动态 import 避免 main ↔ streamerController 静态循环依赖
     if (task.type === 'cron' && task.result?.trim()) {
@@ -796,8 +843,24 @@ function createWindow(): void {
         }
       });
     }
+    // background/batch 异步任务：唤醒主对话 AI 继续工作流
+    // cron（schedule_task）不需要：子智能体自己用 speak 通知用户
+    if ((task.type === 'background' || task.type === 'batch') && task.conversation_id) {
+      const resultPreview = task.result && task.result.length > 300
+        ? task.result.slice(0, 300) + '…'
+        : task.result ?? '';
+      const wakeupText = `【系统通知】后台任务「${task.title}」已完成。${resultPreview ? `\n\n结果摘要：${resultPreview}` : ''}\n\n请检查结果并继续执行后续步骤。`;
+      sendAgentWakeup(task.conversation_id, wakeupText);
+    }
   });
-  taskManager.on('task:failed',    pushTaskEvent('task:failed'));
+  taskManager.on('task:failed',    (task) => {
+    pushTaskEvent('task:failed')(task);
+    console.log(`[TaskManager] ❌ 任务失败: 「${task.title}」 (${task.id.slice(0, 8)}…) — ${task.error ?? '未知错误'}`);
+    if ((task.type === 'background' || task.type === 'batch') && task.conversation_id) {
+      const wakeupText = `【系统通知】后台任务「${task.title}」执行失败。\n错误信息：${task.error ?? '未知错误'}\n\n请处理错误或告知用户。`;
+      sendAgentWakeup(task.conversation_id, wakeupText);
+    }
+  });
   taskManager.on('task:cancelled', pushTaskEvent('task:cancelled'));
   taskManager.on('task:progress',  pushTaskEvent('task:progress'));
 }

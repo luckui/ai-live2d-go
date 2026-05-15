@@ -42,3 +42,5 @@ tts-server*/.venv/
 tts-server*/.server.pid
 tts-server*/models/
 tts-server*/generated_audio/
+
+electron/manual

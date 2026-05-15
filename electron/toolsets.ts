@@ -176,7 +176,8 @@ export const TOOLSETS: Record<string, ToolsetDefinition> = {
       "schedule_task",           // 🆕 定时任务调度
       
       // B 站视频（供后台 agent 任务使用，如定时逛B站首页解说）
-      "watch_bilibili_video",    // 打开B站视频并获取元数据      "speak",                   // TTS 朗读（agent 任务可主动触发语音播报）      
+      "watch_bilibili_video",    // 打开B站视频并获取元数据      
+      "speak",                   // TTS 朗读（agent 任务可主动触发语音播报）      
       // OCR 工具
       // "sys_find_text",           // OCR 查找文字
       // "sys_find_text_click",     // OCR 查找并点击

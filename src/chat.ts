@@ -41,6 +41,11 @@ declare global {
       deleteConversation(id: string): Promise<void>;
       renameConversation(id: string, title: string): Promise<void>;
       send(conversationId: string, content: string): Promise<{ content: string; created_at: number }>;
+      stopAI?(): Promise<void>;
+      /** 监听主进程注入的 AI 主动消息（来自后台任务完成通知） */
+      onAgentMessage?(cb: (payload: { conversationId: string; content: string }) => void): () => void;
+      /** 监听 background/batch 任务完成后的主对话 AI 唤醒（触发新轮工作流） */
+      onWakeup?(cb: (payload: { conversationId: string; text: string }) => void): () => void;
     };
     appLifecycleAPI?: {
       onQuitting(cb: () => void): void;
@@ -1341,6 +1346,64 @@ export async function initChat(): Promise<void> {
     console.log(`[Hearing] 自动发送 (${ev.type}):`, ev.text.slice(0, 50));
     autoSendMessage(ev.text, ev.type);
   });
+
+  // ── AI 主动消息注入（后台任务完成通知 / speak 工具）────────────
+  window.chatAPI?.onAgentMessage?.((payload) => {
+    // 仅当当前对话与通知对话一致时显示
+    if (payload.conversationId !== currentConversationId) return;
+    console.log('[Chat] 收到 AI 主动消息:', payload.content.slice(0, 60));
+    addMessage('ai', payload.content, true, Date.now());
+    // TTS 由 injectAgentMessage 在主进程侧独立触发，渲染层只负责显示气泡
+    if (!_chatExpanded) {
+      showTypewriterBubble(payload.content, payload.content.length * 60);
+    }
+  });
+
+  // ── background/batch 异步任务完成 → 唤醒主对话 AI 继续工作流 ──────
+  // （cron 定时任务不会进入此分支，它们由子智能体自己 speak 结果）
+  window.chatAPI?.onWakeup?.((payload) => {
+    if (payload.conversationId !== currentConversationId) return;
+    if (isSending) return;
+    console.log('[Chat] 异步任务完成，唤醒主对话 AI:', payload.text.slice(0, 60));
+
+    isSending = true;
+    const sendBtn = document.getElementById('send-btn') as HTMLButtonElement;
+    if (sendBtn) {
+      sendBtn.classList.add('stop-mode');
+      sendBtn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>`;
+    }
+    const typing = addTypingIndicator();
+
+    window.chatAPI!.send(payload.conversationId, payload.text)
+      .then((result) => {
+        typing?.remove();
+        const { emotion, cleaned } = extractEmotionTag(result.content);
+        if (emotion) triggerEmotion(emotion);
+        addMessage('ai', cleaned, true, result.created_at);
+        playTTS(cleaned, (actualMs) => {
+          if (!_chatExpanded) {
+            showTypewriterBubble(cleaned, actualMs > 0 ? Math.max(300, actualMs * 0.92) : cleaned.length * 60);
+          }
+        }).catch((e) => console.error('[TTS] wakeup playTTS error:', e));
+        void refreshConvTitle(payload.conversationId);
+      })
+      .catch((e) => {
+        typing?.remove();
+        const errMsg = (e as Error).message;
+        if (!errMsg.includes('aborted') && !errMsg.includes('stopped')) {
+          addMessage('ai', `（异步任务处理出错：${errMsg}）`);
+        }
+      })
+      .finally(() => {
+        isSending = false;
+        if (sendBtn) {
+          sendBtn.disabled = false;
+          sendBtn.classList.remove('stop-mode');
+          sendBtn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>`;
+        }
+      });
+  });
+
 }
 
 
