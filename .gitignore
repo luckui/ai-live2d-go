@@ -42,5 +42,9 @@ tts-server*/.venv/
 tts-server*/.server.pid
 tts-server*/models/
 tts-server*/generated_audio/
+# Genie-TTS 模型文件和缓存（体积大，运行 download_models.py 自动下载）
+tts-server*/GenieData/
+tts-server*/CharacterModels/
+tts-server*/.cache/
 
 electron/manual

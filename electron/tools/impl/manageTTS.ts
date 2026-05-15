@@ -1,7 +1,7 @@
 /**
  * Skill: manage_tts
  *
- * 管理 TTS 语音合成功能（多引擎：edge-tts / moss-tts-nano）。
+ * 管理 TTS 语音合成功能（多引擎：edge-tts / moss-tts-nano / genie-tts）。
  * 支持操作：status / install / start / stop / install_and_start / enable / disable / switch
  *
  * 该工具让 AI Agent 能响应用户的语音系统安装/管理请求，
@@ -16,7 +16,7 @@ interface ManageTTSParams {
   /** 要执行的操作 */
   action: 'status' | 'install' | 'start' | 'stop' | 'install_and_start' | 'enable' | 'disable' | 'switch';
   /** 引擎名称，可选。switch 操作必填。其余操作不填时自动使用当前 provider 的引擎。 */
-  engine?: 'edge-tts' | 'moss-tts-nano';
+  engine?: 'edge-tts' | 'moss-tts-nano' | 'genie-tts';
   /** 切换到的 provider key，switch 操作用 */
   provider?: string;
 }
@@ -27,7 +27,7 @@ const manageTTSTool: ToolDefinition<ManageTTSParams> = {
     function: {
       name: 'manage_tts',
       description:
-        '管理 TTS 语音合成功能（多引擎：edge-tts / moss-tts-nano）。\n' +
+        '管理 TTS 语音合成功能（多引擎：edge-tts / moss-tts-nano / genie-tts）。\n' +
         '当用户说"开启语音"、"关闭语音"、"安装语音"、"切换语音引擎"等时使用此工具。\n\n' +
         '操作说明：\n' +
         '  - enable：开启语音（会自动启动本地服务，如未安装会提示）\n' +
@@ -37,16 +37,20 @@ const manageTTSTool: ToolDefinition<ManageTTSParams> = {
         '  - status：查看当前状态\n\n' +
         '可用引擎：\n' +
         '  - edge-tts（默认）：在线，快速，免费\n' +
-        '  - moss-tts-nano：离线，本地推理，支持音色克隆\n\n' +
+        '  - moss-tts-nano：离线，本地推理，支持音色克隆\n' +
+        '  - genie-tts：离线，GPT-SoVITS ONNX，CPU 高质量推理，菲比音色，支持中/英/日/韩\n\n' +
         '可用 provider key：\n' +
         '  - local_edge_tts（edge-tts 引擎）\n' +
-        '  - local_moss_nano（moss-tts-nano 引擎）\n\n' +
+        '  - local_moss_nano（moss-tts-nano 引擎）\n' +
+        '  - local_genie_tts（genie-tts 引擎，菲比音色）\n\n' +
         '【简单规则】\n' +
         '  用户说 开启/启用/打开 语音 → enable\n' +
         '  用户说 关闭/禁用/停止 语音 → disable\n' +
         '  用户说 安装语音 → install_and_start（默认 edge-tts）\n' +
         '  用户说 安装 MOSS/Nano 语音 → install_and_start + engine=moss-tts-nano\n' +
         '  用户说 切换到 MOSS → switch + provider=local_moss_nano\n' +
+        '  用户说 安装 Genie/菲比 语音 → install_and_start + engine=genie-tts\n' +
+        '  用户说 切换到 Genie/菲比 → switch + provider=local_genie_tts\n' +
         '  用户问语音状态 → status',
       parameters: {
         type: 'object',
@@ -58,7 +62,7 @@ const manageTTSTool: ToolDefinition<ManageTTSParams> = {
           },
           engine: {
             type: 'string',
-            enum: ['edge-tts', 'moss-tts-nano'],
+            enum: ['edge-tts', 'moss-tts-nano', 'genie-tts'],
             description: '引擎名称。install/start/stop 时指定操作哪个引擎，不填则自动使用当前 provider 的引擎。',
           },
           provider: {

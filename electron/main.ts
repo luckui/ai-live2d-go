@@ -510,6 +510,10 @@ function createWindow(): void {
   });
 
   // ── TTS ──────────────────────────────────────────────────────
+  ipcMain.handle('tts:speak:abort', () => {
+    ttsService.abortAll();
+  });
+
   ipcMain.handle('tts:speak', async (_e, text: string) => {
     console.log(`[TTS] tts:speak 收到请求: enabled=${ttsService.isEnabled}, text="${text.slice(0, 60)}…"`);
     if (!ttsService.isEnabled) {
@@ -845,7 +849,8 @@ function createWindow(): void {
     }
     // background/batch 异步任务：唤醒主对话 AI 继续工作流
     // cron（schedule_task）不需要：子智能体自己用 speak 通知用户
-    if ((task.type === 'background' || task.type === 'batch') && task.conversation_id) {
+    // 有 parent_task_id 的是批量子任务，不单独唤醒——等父任务完成后统一唤醒一次
+    if ((task.type === 'background' || task.type === 'batch') && task.conversation_id && !task.parent_task_id) {
       const resultPreview = task.result && task.result.length > 300
         ? task.result.slice(0, 300) + '…'
         : task.result ?? '';
@@ -856,7 +861,7 @@ function createWindow(): void {
   taskManager.on('task:failed',    (task) => {
     pushTaskEvent('task:failed')(task);
     console.log(`[TaskManager] ❌ 任务失败: 「${task.title}」 (${task.id.slice(0, 8)}…) — ${task.error ?? '未知错误'}`);
-    if ((task.type === 'background' || task.type === 'batch') && task.conversation_id) {
+    if ((task.type === 'background' || task.type === 'batch') && task.conversation_id && !task.parent_task_id) {
       const wakeupText = `【系统通知】后台任务「${task.title}」执行失败。\n错误信息：${task.error ?? '未知错误'}\n\n请处理错误或告知用户。`;
       sendAgentWakeup(task.conversation_id, wakeupText);
     }

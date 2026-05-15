@@ -56,6 +56,8 @@ contextBridge.exposeInMainWorld('discordAPI', {
 contextBridge.exposeInMainWorld('ttsAPI', {
   isEnabled: () => ipcRenderer.invoke('tts:isEnabled'),
   speak: (text: string) => ipcRenderer.invoke('tts:speak', text),
+  /** 取消所有挂起的 speak 请求（新一轮播放开始时调用，防止旧请求堆积在服务器队列） */
+  abortSpeak: () => ipcRenderer.invoke('tts:speak:abort'),
   health: () => ipcRenderer.invoke('tts:health'),
   /** 监听主进程推送的 TTS 播放请求（用于直播间等场景） */
   onPlay: (cb: (text: string) => void) =>

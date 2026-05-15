@@ -677,13 +677,13 @@ async function autoSendMessage(text: string, type: 'dictation' | 'summary'): Pro
       const ttsEnabled = await window.ttsAPI?.isEnabled().catch(() => false) ?? false;
       if (!ttsEnabled) showTypewriterBubble(displayText, displayText.length * 60);
     }
-    playTTS(displayText, (actualMs) => {
+    playTTS(displayText, (actualMs, sentenceText) => {
       if (!_chatExpanded) {
         if (actualMs > 0) {
-          // TTS 解码成功：打字机略快于声音
-          showTypewriterBubble(displayText, Math.max(300, actualMs * 0.92));
+          // 每句播放前调用：显示当句文本+当句音频时长
+          showTypewriterBubble(sentenceText ?? displayText, Math.max(300, actualMs * 0.92));
         } else {
-          // TTS 启用但服务器不可达：回退到估算速度
+          // TTS 服务不可达：回退到全文估算速度
           showTypewriterBubble(displayText, displayText.length * 60);
         }
       }
@@ -780,10 +780,10 @@ async function sendMessage(): Promise<void> {
     }
     // TTS 播放（未启用时静默跳过）
     console.log('[Chat] 准备调用 playTTS, 文本长度:', sendDisplayText.length);
-    playTTS(sendDisplayText, (actualMs) => {
+    playTTS(sendDisplayText, (actualMs, sentenceText) => {
       if (!_chatExpanded) {
         if (actualMs > 0) {
-          showTypewriterBubble(sendDisplayText, Math.max(300, actualMs * 0.92));
+          showTypewriterBubble(sentenceText ?? sendDisplayText, Math.max(300, actualMs * 0.92));
         } else {
           showTypewriterBubble(sendDisplayText, sendDisplayText.length * 60);
         }
@@ -1380,9 +1380,9 @@ export async function initChat(): Promise<void> {
         const { emotion, cleaned } = extractEmotionTag(result.content);
         if (emotion) triggerEmotion(emotion);
         addMessage('ai', cleaned, true, result.created_at);
-        playTTS(cleaned, (actualMs) => {
+        playTTS(cleaned, (actualMs, sentenceText) => {
           if (!_chatExpanded) {
-            showTypewriterBubble(cleaned, actualMs > 0 ? Math.max(300, actualMs * 0.92) : cleaned.length * 60);
+            showTypewriterBubble(sentenceText ?? cleaned, actualMs > 0 ? Math.max(300, actualMs * 0.92) : cleaned.length * 60);
           }
         }).catch((e) => console.error('[TTS] wakeup playTTS error:', e));
         void refreshConvTitle(payload.conversationId);

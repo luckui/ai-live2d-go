@@ -112,6 +112,20 @@ const defaultTTSConfig: TTSConfig = {
       speakerMode: 'preset',
       voicePresets: NANO_VOICE_PRESETS,
     },
+    local_genie_tts: {
+      type: 'http-tts',
+      name: 'Genie-TTS 本地（菲比）',
+      baseUrl: 'http://127.0.0.1:9882',
+      apiKey: '',
+      speaker: 'feibi',
+      language: 'auto',
+      isLocal: true,
+      localEngine: 'genie-tts',
+      speakerMode: 'preset',
+      voicePresets: [
+        { id: 'feibi', name: '菲比', description: 'GPT-SoVITS v2ProPlus · 中文/英文/日文/韩文' },
+      ],
+    },
   },
   deletedProviders: [],
 };

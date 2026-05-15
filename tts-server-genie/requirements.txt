@@ -1,0 +1,7 @@
+# Genie-TTS Adapter Server 依赖
+# genie_tts 本身由 extraPackages（Genie-TTS-master 源码 / PyPI）安装
+# 此文件仅补充服务层依赖
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+pydantic>=2.0
+pyyaml>=6.0

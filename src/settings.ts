@@ -64,7 +64,7 @@ interface TTSConfig {
 }
 
 /** 内置 TTS 方案，不允许删除 */
-const BUILTIN_TTS_PROVIDERS = ['local_edge_tts', 'local_moss_nano'];
+const BUILTIN_TTS_PROVIDERS = ['local_edge_tts', 'local_moss_nano', 'local_genie_tts'];
 
 /** 内置 LLM 方案，不允许删除 */
 const BUILTIN_LLM_PROVIDERS = ['doubao', 'qwen35'];
@@ -593,6 +593,7 @@ function renderTTSForm(): void {
       const hintMap: Record<string, string> = {
         'edge-tts': '一键部署免费的 edge-tts 本地服务（需 Python 3.10+）',
         'moss-tts-nano': '部署 MOSS-TTS-Nano 本地离线语音合成（需 Python 3.10+，约 2GB 磁盘）',
+        'genie-tts': '部署 Genie-TTS 本地语音合成，菲比音色（需 Python 3.10+，约 1.5GB 磁盘，首次安装耗时较长）',
       };
       hint.textContent = hintMap[p.localEngine || 'edge-tts'] ?? hintMap['edge-tts'];
     }

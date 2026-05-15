@@ -74,6 +74,27 @@ const ENGINES: Record<string, EngineSpec> = {
     },
     hasModelDownload: true,
   },
+  'genie-tts': {
+    dir: 'tts-server-genie',
+    port: 9882,
+    startupTimeout: 60_000,
+    installHint: '部署 Genie-TTS 本地语音合成（菲比，GPT-SoVITS ONNX，CPU 推理，约 1.5GB 磁盘）',
+    extraPackages: (serverDir) => {
+      // 优先从本地源码安装（开发模式 / 打包携带源码）
+      const candidates = [
+        join(serverDir, '..', '..', 'Genie-TTS-master'),
+        join(serverDir, '..', 'Genie-TTS-master'),
+      ];
+      for (const c of candidates) {
+        if (existsSync(join(c, 'pyproject.toml'))) {
+          return [c];
+        }
+      }
+      // 回退：从 PyPI 安装
+      return ['genie-tts'];
+    },
+    hasModelDownload: true,
+  },
 };
 
 function resolveEngine(engine?: string): EngineSpec {
@@ -279,12 +300,12 @@ export async function install(onProgress?: (msg: string) => void, engine?: strin
     }
   }
 
-  // 4. 下载模型权重（仅 moss-tts-nano，使用 hf-mirror.com）
+  // 4. 下载模型权重（hasModelDownload 引擎，使用 hf-mirror.com）
   if (spec.hasModelDownload && existsSync(join(serverDir, 'download_models.py'))) {
     log('下载模型权重（使用 hf-mirror.com 国内镜像）…');
     const dlResult = await runCmd(
       `"${pythonExe}" download_models.py`,
-      serverDir, 1_800_000, onProgress, // 30 分钟
+      serverDir, 3_600_000, onProgress, // 60 分钟（genie-tts ~1.5GB）
       { HF_ENDPOINT: HF_MIRROR },
     );
     if (dlResult.code !== 0) {

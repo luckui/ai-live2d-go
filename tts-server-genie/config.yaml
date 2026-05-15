@@ -1,0 +1,13 @@
+# Genie-TTS Server Configuration
+server:
+  host: "127.0.0.1"
+  port: 9882
+
+# 默认角色及参考音频预设
+genie:
+  # 默认角色名（CharacterModels/ 目录下必须存在对应模型）
+  default_character: "feibi"
+  # 默认目标语言（auto = 自动检测）
+  default_language: "auto"
+  # 使用 prompt_wav.json 中的哪个预设
+  default_preset: "Normal"

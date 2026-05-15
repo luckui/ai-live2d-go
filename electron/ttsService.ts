@@ -12,7 +12,7 @@ import type { TTSProviderConfig } from './tts.config';
 
 export interface TTSAdapter {
   readonly name: string;
-  speak(text: string, config: TTSAdapterConfig): Promise<ArrayBuffer>;
+  speak(text: string, config: TTSAdapterConfig, signal?: AbortSignal): Promise<ArrayBuffer>;
 }
 
 export interface TTSAdapterConfig {
@@ -32,7 +32,7 @@ class HttpTTSAdapter implements TTSAdapter {
     this.name = `http-tts(${baseUrl})`;
   }
 
-  async speak(text: string, config: TTSAdapterConfig): Promise<ArrayBuffer> {
+  async speak(text: string, config: TTSAdapterConfig, signal?: AbortSignal): Promise<ArrayBuffer> {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (this.apiKey) headers['Authorization'] = `Bearer ${this.apiKey}`;
 
@@ -42,9 +42,9 @@ class HttpTTSAdapter implements TTSAdapter {
       body: JSON.stringify({
         text,
         speaker:  config.speaker,
-        language: config.language,
+        language: config.language || 'auto',
       }),
-      signal: AbortSignal.timeout(120_000),
+      signal: signal ?? AbortSignal.timeout(180_000),
     });
 
     if (!resp.ok) {
@@ -62,6 +62,8 @@ class TTSService {
   private _adapter: TTSAdapter | null = null;
   private _config: TTSAdapterConfig = { speaker: '', language: 'Auto' };
   private _currentUrl = '';
+  /** 所有正在进行的 speak 请求的 AbortController，用于批量取消 */
+  private _pendingControllers = new Set<AbortController>();
 
   /**
    * 配置当前 TTS provider。传 null 则禁用。
@@ -89,12 +91,31 @@ class TTSService {
     return this._currentUrl;
   }
 
+  /**
+   * 取消所有正在进行的 speak 请求。
+   * 新一轮 playTTS 开始时由渲染进程触发，避免旧请求堆积在服务器队列中。
+   */
+  abortAll(): void {
+    for (const ctrl of this._pendingControllers) ctrl.abort();
+    this._pendingControllers.clear();
+    console.log('[TTS] abortAll: 已取消所有挂起的 speak 请求');
+  }
+
   async speak(text: string): Promise<ArrayBuffer> {
     if (!this._adapter) {
       throw new Error('TTS 未启用');
     }
+    const ctrl = new AbortController();
+    // 单句最长 3 分钟（CPU 推理可能很慢）
+    const timer = setTimeout(() => ctrl.abort(new DOMException('timeout', 'TimeoutError')), 180_000);
+    this._pendingControllers.add(ctrl);
     console.log(`[TTS] speak: url=${this._currentUrl}, speaker=${this._config.speaker}, lang=${this._config.language}, text="${text.slice(0, 50)}"`);
-    return this._adapter.speak(text, this._config);
+    try {
+      return await this._adapter.speak(text, this._config, ctrl.signal);
+    } finally {
+      clearTimeout(timer);
+      this._pendingControllers.delete(ctrl);
+    }
   }
 
   async health(): Promise<{ ok: boolean; status?: number; body?: string; error?: string }> {
